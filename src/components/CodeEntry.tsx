@@ -6,10 +6,9 @@ import { useTheme } from '../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { useNavigate } from 'react-router-dom';
 
-interface CodeEntryProps {
-  onAdminLogin: () => void;
-}
+type CodeEntryProps = object;
 
 // Utility to convert Firestore Timestamp, Date, or string to JS Date
 function toJSDate(ts: unknown): Date {
@@ -20,12 +19,13 @@ function toJSDate(ts: unknown): Date {
   return new Date(ts as string);
 }
 
-const CodeEntry: React.FC<CodeEntryProps> = ({ onAdminLogin }) => {
+const CodeEntry: React.FC<CodeEntryProps> = () => {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error' | 'info'>('info');
   const { isDarkMode, toggleDarkMode } = useTheme();
+  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +42,7 @@ const CodeEntry: React.FC<CodeEntryProps> = ({ onAdminLogin }) => {
         const adminData = adminSnap.data();
         if (code === adminData.secretCode) {
           sessionStorage.setItem('isAdmin', 'true');
-          onAdminLogin();
+          navigate('/admin');
           setCode('');
           setIsLoading(false);
           return;

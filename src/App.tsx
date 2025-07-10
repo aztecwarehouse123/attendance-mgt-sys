@@ -9,16 +9,11 @@ import AttendanceDetail from './components/admin/AttendanceDetail';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 function App() {
-  const handleAdminLogin = () => {
-    // Navigate to admin dashboard
-    window.location.href = '/admin';
-  };
-
   return (
     <ThemeProvider>
       <Router>
         <Routes>
-          <Route path="/" element={<CodeEntry onAdminLogin={handleAdminLogin} />} />
+          <Route path="/" element={<CodeEntry />} />
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminMain />} />
             <Route path="reports" element={<AdminReports />} />
