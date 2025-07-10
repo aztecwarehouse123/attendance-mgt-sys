@@ -29,4 +29,4 @@ git push origin main
 npm run build
 npm run deploy
 
-"homepage": "https://aztecwarehouse123.github.io/aztec-warehouse",
+"homepage": "https://aztecwarehouse123.github.io/attendance-mgt-sys",
