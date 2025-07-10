@@ -2,14 +2,14 @@
   "name": "vite-react-typescript-starter",
   "private": true,
   "version": "0.0.0",
-  "homepage": "https://aztecwarehouse123.github.io",
+  "homepage": "https://aztecsm.com",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "predeploy": "npm run build",
+    "predeploy": "npm run build && cp CNAME dist/CNAME",
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
