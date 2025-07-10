@@ -2,7 +2,7 @@
   "name": "vite-react-typescript-starter",
   "private": true,
   "version": "0.0.0",
-  "homepage": "https://aztecwarehouse123.github.io/attendance-mgt-sys",
+  "homepage": "https://aztecwarehouse123.github.io",
   "type": "module",
   "scripts": {
     "dev": "vite",
