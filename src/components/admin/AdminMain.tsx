@@ -78,10 +78,10 @@ const AdminMain: React.FC = () => {
         };
       })
       .filter(user => {
-        // Only show users with at least one punch in the selected month
+        // Always show all users except admin, filtered by search
         const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           user.secretCode.toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch && user.monthAttendance.length > 0;
+        return matchesSearch;
       });
 
     setFilteredUsers(filtered);
@@ -355,17 +355,23 @@ const AdminMain: React.FC = () => {
               </tr>
             </thead>
             <tbody className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} divide-y divide-slate-200`}>
-              {filteredUsers.map((user, index) => (
-                <motion.tr 
-                  key={user.id} 
-                  className={`${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50'} transition-colors`}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
+              {filteredUsers.map((user, index) => {
+                const isEmptyMonth = (user.monthAttendance || []).length === 0;
+                const highlight = isEmptyMonth;
+                return (
+                  <motion.tr 
+                    key={user.id} 
+                    className={`transition-colors ${highlight ? (isDarkMode ? 'bg-yellow-900/30' : 'bg-yellow-100/80') : (isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50')}`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                    <div className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}> 
                       {user.name}
+                      {highlight && (
+                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${isDarkMode ? 'bg-yellow-700 text-yellow-200' : 'bg-yellow-200 text-yellow-800'}`}>No Data This Month</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -404,7 +410,8 @@ const AdminMain: React.FC = () => {
                     </div>
                   </td>
                 </motion.tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>
