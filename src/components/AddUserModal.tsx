@@ -138,7 +138,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
 
         <div>
           <label className={`block text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>
-            Hourly Rate ($)
+            Hourly Rate (£)
           </label>
           <input
             type="number"
@@ -149,7 +149,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                 ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400 focus:ring-blue-400/20'
                 : 'border-slate-300 text-slate-800 placeholder-slate-500 focus:ring-blue-500'
             }`}
-            placeholder="15.00"
+            placeholder="15.00 (GBP)"
             min="0"
             step="0.01"
             required

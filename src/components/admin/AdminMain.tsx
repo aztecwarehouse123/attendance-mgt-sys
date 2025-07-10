@@ -375,11 +375,11 @@ const AdminMain: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className={`text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                      ${user.hourlyRate || 0}/hr
+                      £{user.hourlyRate || 0}/hr
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>${(calculateMonthlyHours(user.monthAttendance || [], selectedMonth, new Date().getFullYear()) * user.hourlyRate).toFixed(2)}</div>
+                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>£{(calculateMonthlyHours(user.monthAttendance || [], selectedMonth, new Date().getFullYear()) * user.hourlyRate).toFixed(2)}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{formatHoursAndMinutes(calculateMonthlyHours(user.monthAttendance || [], selectedMonth, new Date().getFullYear()))}</div>
@@ -463,7 +463,7 @@ const AdminMain: React.FC = () => {
             </div>
             <div>
               <label className={`block text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>
-                Hourly Rate ($)
+                Hourly Rate (£)
               </label>
               <input
                 type="number"

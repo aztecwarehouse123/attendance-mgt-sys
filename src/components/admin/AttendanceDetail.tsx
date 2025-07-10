@@ -158,9 +158,9 @@ const AttendanceDetail: React.FC = () => {
               <div className="font-semibold text-lg mb-2">{selectedUser.name}</div>
               <div className="flex flex-wrap gap-6 text-sm">
                 <div><b>Secret Code:</b> {selectedUser.secretCode}</div>
-                <div><b>Hourly Rate:</b> ${selectedUser.hourlyRate}</div>
+                <div><b>Hourly Rate:</b> £{selectedUser.hourlyRate}</div>
                 <div>
-                  <b>Total Amount:</b> ${(() => {
+                  <b>Total Amount:</b> £{(() => {
                     let total = 0;
                     // Sort and group by day
                     const logByDay: { [key: string]: typeof filteredAttendance } = {};

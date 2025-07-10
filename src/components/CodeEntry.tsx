@@ -128,7 +128,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
       setMessage(
         `${user.name} - ${punchType === 'IN' ? 'Punched IN' : 'Punched OUT'} at ${formatTime(now)}${
-          punchType === 'OUT' ? ` | Earned: $${amountEarned.toFixed(2)}` : ''
+          punchType === 'OUT' ? ` | Earned: £${amountEarned.toFixed(2)}` : ''
         }`
       );
       setMessageType('success');
