@@ -122,7 +122,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         timestamp: now,
         type: punchType,
         hourlyRate: user.hourlyRate,
-        amountEarned: punchType === 'OUT' ? amountEarned : undefined,
+        ...(punchType === 'OUT' && { amountEarned }),
         date: formatDate(now)
       });
 
