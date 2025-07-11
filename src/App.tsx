@@ -6,6 +6,7 @@ import AdminMain from './components/admin/AdminMain';
 import AdminReports from './components/admin/AdminReports';
 import AdminSettings from './components/admin/AdminSettings';
 import AttendanceDetail from './components/admin/AttendanceDetail';
+import CurrentlyWorking from './components/admin/CurrentlyWorking';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
             <Route path="reports" element={<AdminReports />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="attendance-detail" element={<AttendanceDetail />} />
+            <Route path="currently-working" element={<CurrentlyWorking />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

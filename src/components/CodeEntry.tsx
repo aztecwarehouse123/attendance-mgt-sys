@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
 import { Key, Clock, CheckCircle, Moon, Sun } from 'lucide-react';
 import { getUserBySecretCode, updateUserAttendance, createAttendanceRecord } from '../services/firestore';
-import { calculateHoursWorked, formatDate, formatTime } from '../utils/timeCalculations';
+import { formatDate, formatTime } from '../utils/timeCalculations';
 import { useTheme } from '../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useNavigate } from 'react-router-dom';
+import Modal from './Modal';
+import { User, AttendanceEntry } from '../types';
 
 type CodeEntryProps = object;
 
 // Utility to convert Firestore Timestamp, Date, or string to JS Date
 function toJSDate(ts: unknown): Date {
   if (ts instanceof Date) return ts;
-  if (ts && typeof ts === 'object' && 'toDate' in ts && typeof (ts as { toDate: unknown }).toDate === 'function') {
+  if (ts && typeof (ts as { toDate?: () => Date }).toDate === 'function') {
     return (ts as { toDate: () => Date }).toDate();
   }
   return new Date(ts as string);
@@ -26,6 +28,41 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
   const [messageType, setMessageType] = useState<'success' | 'error' | 'info'>('info');
   const { isDarkMode, toggleDarkMode } = useTheme();
   const navigate = useNavigate();
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotOutTime, setForgotOutTime] = useState('');
+  const [forgotOutDate, setForgotOutDate] = useState<Date | null>(null);
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [pendingNow, setPendingNow] = useState<Date | null>(null);
+
+  // Helper toJSDate
+  function toJSDate(ts: unknown): Date {
+    if (ts instanceof Date) return ts;
+    if (ts && typeof (ts as { toDate?: () => Date }).toDate === 'function') {
+      return (ts as { toDate: () => Date }).toDate();
+    }
+    return new Date(ts as string);
+  }
+
+  // Helper to get yesterday's last punch
+  function getForgottenPunchOut(user: User) {
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const yesterdayEntries = (user.attendanceLog || []).filter((entry: AttendanceEntry) => {
+      const entryDate = toJSDate(entry.timestamp);
+      return (
+        entryDate.getFullYear() === yesterday.getFullYear() &&
+        entryDate.getMonth() === yesterday.getMonth() &&
+        entryDate.getDate() === yesterday.getDate()
+      );
+    });
+    if (yesterdayEntries.length > 0) {
+      const last = yesterdayEntries[yesterdayEntries.length - 1];
+      if (last.type === 'IN') {
+        return { lastIn: last, entries: yesterdayEntries, date: yesterday };
+      }
+    }
+    return null;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,10 +96,21 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         return;
       }
 
+      // Check for forgotten punch out yesterday
+      const forgot = getForgottenPunchOut(user);
+      if (forgot) {
+        setShowForgotModal(true);
+        setForgotOutDate(forgot.date);
+        setPendingUser(user);
+        setPendingNow(new Date());
+        setIsLoading(false);
+        return;
+      }
+
       const now = new Date();
       // Filter today's entries
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const todayEntries = (user.attendanceLog || []).filter(entry => {
+      const todayEntries = (user.attendanceLog || []).filter((entry: AttendanceEntry) => {
         const entryDate = toJSDate(entry.timestamp);
         return (
           entryDate.getFullYear() === today.getFullYear() &&
@@ -90,11 +138,29 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
       // If punching out, calculate hours and amount
       if (punchType === 'OUT') {
-        const hoursWorked = calculateHoursWorked([
-          ...user.attendanceLog,
-          { timestamp: now, type: 'OUT' }
-        ]);
-        amountEarned = hoursWorked * user.hourlyRate;
+        // Find the last IN today
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const todayEntries = (user.attendanceLog || []).filter((entry: AttendanceEntry) => {
+          const entryDate = toJSDate(entry.timestamp);
+          return (
+            entryDate.getFullYear() === today.getFullYear() &&
+            entryDate.getMonth() === today.getMonth() &&
+            entryDate.getDate() === today.getDate()
+          );
+        });
+        let lastInTime = null;
+        for (let i = todayEntries.length - 1; i >= 0; i--) {
+          if (todayEntries[i].type === 'IN') {
+            lastInTime = toJSDate(todayEntries[i].timestamp);
+            break;
+          }
+        }
+        if (lastInTime) {
+          const minutesWorked = (now.getTime() - lastInTime.getTime()) / (1000 * 60);
+          amountEarned = (minutesWorked / 60) * user.hourlyRate;
+        } else {
+          amountEarned = 0;
+        }
         newTotalAmount = user.amount + amountEarned;
       }
 
@@ -139,6 +205,40 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       console.error('Error:', error);
     }
 
+    setIsLoading(false);
+  };
+
+  // Handler for modal submit
+  const handleForgotOutSubmit = async () => {
+    if (!pendingUser || !forgotOutTime || !forgotOutDate) return;
+    setIsLoading(true);
+    // Compose punch out datetime for yesterday
+    const [h, m] = forgotOutTime.split(':');
+    const punchOutDate = new Date(forgotOutDate);
+    punchOutDate.setHours(Number(h), Number(m), 0, 0);
+    // Add OUT entry for yesterday
+    await updateUserAttendance(
+      pendingUser.id,
+      { timestamp: punchOutDate, type: 'OUT' }
+    );
+    // After fixing, punch in for today
+    const now = pendingNow || new Date();
+    await updateUserAttendance(
+      pendingUser.id,
+      { timestamp: now, type: 'IN' }
+    );
+    await createAttendanceRecord({
+      userId: pendingUser.id,
+      name: pendingUser.name,
+      timestamp: now,
+      type: 'IN',
+      hourlyRate: pendingUser.hourlyRate,
+      date: formatDate(now)
+    });
+    setMessage(`${pendingUser.name} - Punched IN at ${formatTime(now)}`);
+    setMessageType('success');
+    setCode('');
+    setShowForgotModal(false);
     setIsLoading(false);
   };
 
@@ -284,6 +384,58 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           </p>
         </div>
       </motion.div>
+      <Modal
+        isOpen={showForgotModal}
+        onClose={() => setShowForgotModal(false)}
+        title="Forgot to Punch Out Yesterday"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p>You forgot to punch out yesterday. Please enter your punch out time for yesterday to complete your attendance record.</p>
+          <input
+            type="time"
+            value={forgotOutTime}
+            onChange={e => setForgotOutTime(e.target.value)}
+            className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent"
+            min={(() => {
+              if (!pendingUser || !forgotOutDate) return undefined;
+              // Find last IN time for yesterday
+              const entries = (pendingUser.attendanceLog || []).filter((entry: AttendanceEntry) => {
+                const entryDate = toJSDate(entry.timestamp);
+                return (
+                  entryDate.getFullYear() === forgotOutDate.getFullYear() &&
+                  entryDate.getMonth() === forgotOutDate.getMonth() &&
+                  entryDate.getDate() === forgotOutDate.getDate()
+                );
+              });
+              const lastIn = entries.length > 0 ? toJSDate(entries[entries.length - 1].timestamp) : null;
+              if (lastIn) {
+                return lastIn.toTimeString().slice(0,5);
+              }
+              return undefined;
+            })()}
+            max="23:59"
+            required
+          />
+          <div className="flex justify-end space-x-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowForgotModal(false)}
+              className="px-4 py-2 border rounded-md"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleForgotOutSubmit}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+              disabled={!forgotOutTime || isLoading}
+            >
+              Submit
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

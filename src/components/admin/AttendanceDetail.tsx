@@ -5,12 +5,14 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
+import { RotateCw } from 'lucide-react';
 
 const AttendanceDetail: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   // Set default startDate to first day of current month, endDate to today
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -18,16 +20,21 @@ const AttendanceDetail: React.FC = () => {
   const [endDate, setEndDate] = useState<string>(today.toISOString().slice(0, 10));
   const { isDarkMode } = useTheme();
 
+  const fetchUsers = async () => {
+    setIsLoading(true);
+    setIsRefreshing(true);
+    const allUsers = await getAllUsers();
+    const filtered = allUsers.filter(u => u.id !== 'admin');
+    setUsers(filtered);
+    if (filtered.length > 0) setSelectedUserId(filtered[0].id);
+    setIsLoading(false);
+    setIsRefreshing(false);
+  };
+
   useEffect(() => {
-    const fetchUsers = async () => {
-      setIsLoading(true);
-      const allUsers = await getAllUsers();
-      const filtered = allUsers.filter(u => u.id !== 'admin');
-      setUsers(filtered);
-      if (filtered.length > 0) setSelectedUserId(filtered[0].id);
-      setIsLoading(false);
-    };
     fetchUsers();
+    const interval = setInterval(fetchUsers, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -85,8 +92,13 @@ const AttendanceDetail: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  // Add manual refresh handler
+  const handleManualRefresh = () => {
+    fetchUsers();
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -100,7 +112,7 @@ const AttendanceDetail: React.FC = () => {
             View and export detailed attendance punches for each user.
           </p>
           <div className="flex justify-end mb-4">
-            <div className="flex space-x-2">
+            <div className="flex space-x-2 items-center">
               <button
                 onClick={exportToExcel}
                 className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
@@ -113,6 +125,15 @@ const AttendanceDetail: React.FC = () => {
               >
                 Export CSV
               </button>
+              <button
+                onClick={handleManualRefresh}
+                className="ml-2 p-2 rounded-full border border-transparent hover:border-blue-400 transition-colors"
+                aria-label="Refresh"
+                disabled={isRefreshing}
+              >
+                <RotateCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''} text-blue-400`} />
+              </button>
+              {isRefreshing && <span className="text-xs text-slate-400 ml-1">Refreshing...</span>}
             </div>
           </div>
           <div className="mb-6 flex flex-col md:flex-row md:items-end gap-4">

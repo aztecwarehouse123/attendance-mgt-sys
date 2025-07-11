@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Download, Filter, UserPlus, Edit2, Trash2 } from 'lucide-react';
+import { Search, Filter, UserPlus, Edit2, Trash2, RotateCw } from 'lucide-react';
 import { getAllUsers, deleteUser, updateUser } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
 import { calculateTotalHoursThisMonth, calculateMonthlyHours } from '../../utils/timeCalculations';
@@ -27,9 +27,15 @@ const AdminMain: React.FC = () => {
   const [editError, setEditError] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     loadUsers();
+    const interval = setInterval(() => {
+      setIsRefreshing(true);
+      loadUsers();
+    }, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -56,6 +62,7 @@ const AdminMain: React.FC = () => {
       console.error('Error loading users:', error);
     }finally{
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -204,6 +211,11 @@ const AdminMain: React.FC = () => {
     return `${hours} hours ${minutes} minutes`;
   }
 
+  // Add manual refresh handler
+  const handleManualRefresh = () => {
+    loadUsers();
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -248,8 +260,8 @@ const AdminMain: React.FC = () => {
         transition={{ delay: 0.1 }}
         className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-6 border`}
       >
-        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
-          <div className="flex flex-col sm:flex-row gap-4 flex-1">
+        <div className="flex flex-col md:flex-row md:items-end gap-4 mb-4">
+          <div className="flex-1 flex flex-col md:flex-row md:items-end gap-4">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
               <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'} w-5 h-5`} />
@@ -286,27 +298,28 @@ const AdminMain: React.FC = () => {
               </select>
             </div>
           </div>
-
-          {/* Export Buttons */}
-          <div className="flex space-x-2">
-            <motion.button
+          <div className="flex space-x-2 items-center mt-4 md:mt-0">
+            <button
               onClick={exportToExcel}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
             >
-              <Download className="w-4 h-4" />
-              <span>Export Excel</span>
-            </motion.button>
-            <motion.button
+              Export Excel
+            </button>
+            <button
               onClick={exportToCSV}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
             >
-              <Download className="w-4 h-4" />
-              <span>Export CSV</span>
-            </motion.button>
+              Export CSV
+            </button>
+            <button
+              onClick={handleManualRefresh}
+              className="ml-2 p-2 rounded-full border border-transparent hover:border-blue-400 transition-colors"
+              aria-label="Refresh"
+              disabled={isRefreshing}
+            >
+              <RotateCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''} text-blue-400`} />
+            </button>
+            {isRefreshing && <span className="text-xs text-slate-400 ml-1">Refreshing...</span>}
           </div>
         </div>
       </motion.div>
