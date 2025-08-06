@@ -33,11 +33,19 @@ function getDateRangeArray(start: Date, end: Date): string[] {
 const AdminReports: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<string>('all');
-  // Set default startDate to first day of current month, endDate to today
+  // Set default startDate to first day of current month, endDate to today (using local timezone)
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const [startDate, setStartDate] = useState<string>(firstDayOfMonth.toISOString().slice(0, 10));
-  const [endDate, setEndDate] = useState<string>(today.toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState<string>(
+    firstDayOfMonth.getFullYear() + '-' + 
+    String(firstDayOfMonth.getMonth() + 1).padStart(2, '0') + '-' + 
+    String(firstDayOfMonth.getDate()).padStart(2, '0')
+  );
+  const [endDate, setEndDate] = useState<string>(
+    today.getFullYear() + '-' + 
+    String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+    String(today.getDate()).padStart(2, '0')
+  );
   const [chartData, setChartData] = useState<DailyData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { isDarkMode } = useTheme();

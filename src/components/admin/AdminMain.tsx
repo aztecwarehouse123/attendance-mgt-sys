@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, UserPlus, Edit2, Trash2, RotateCw } from 'lucide-react';
 import { getAllUsers, deleteUser, updateUser } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
-import { calculateTotalHoursThisMonth, calculateMonthlyHours } from '../../utils/timeCalculations';
+import { calculateTotalHoursThisMonth } from '../../utils/timeCalculations';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import AddUserModal from '../AddUserModal';
 import * as XLSX from 'xlsx';
 import Modal from '../Modal';
-import { startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+
 
 type UserWithMonthAttendance = User & { monthAttendance: AttendanceEntry[] };
 
@@ -16,7 +16,19 @@ const AdminMain: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<UserWithMonthAttendance[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [startDate, setStartDate] = useState<string>(() => {
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    return firstDayOfMonth.getFullYear() + '-' + 
+           String(firstDayOfMonth.getMonth() + 1).padStart(2, '0') + '-' + 
+           String(firstDayOfMonth.getDate()).padStart(2, '0');
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    const today = new Date();
+    return today.getFullYear() + '-' + 
+           String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+           String(today.getDate()).padStart(2, '0');
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
   const { isDarkMode } = useTheme();
@@ -29,6 +41,36 @@ const AdminMain: React.FC = () => {
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const filterUsers = useCallback(() => {
+    // Parse date range
+    const rangeStart = startDate ? new Date(startDate) : null;
+    const rangeEnd = endDate ? new Date(endDate + 'T23:59:59') : null; // Include full end day
+
+    const filtered = users
+      .map(user => {
+        // Filter attendanceLog for the selected date range
+        const monthAttendance = (user.attendanceLog || []).filter(entry => {
+          if (!rangeStart && !rangeEnd) return true;
+          const entryDate = new Date(entry.timestamp);
+          if (rangeStart && entryDate < rangeStart) return false;
+          if (rangeEnd && entryDate > rangeEnd) return false;
+          return true;
+        });
+        return {
+          ...user,
+          monthAttendance
+        };
+      })
+      .filter(user => {
+        // Always show all users except admin, filtered by search
+        const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          user.secretCode.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesSearch;
+      });
+
+    setFilteredUsers(filtered);
+  }, [users, searchTerm, startDate, endDate]);
+
   useEffect(() => {
     loadUsers();
     const interval = setInterval(() => {
@@ -40,7 +82,7 @@ const AdminMain: React.FC = () => {
 
   useEffect(() => {
     filterUsers();
-  }, [users, searchTerm, selectedMonth]);
+  }, [filterUsers]);
 
   const loadUsers = async () => {
     try {
@@ -66,36 +108,48 @@ const AdminMain: React.FC = () => {
     }
   };
 
-  const filterUsers = () => {
-    // Get the current year for the selected month
-    const now = new Date();
-    const year = now.getFullYear();
-    const monthStart = startOfMonth(new Date(year, selectedMonth));
-    const monthEnd = endOfMonth(new Date(year, selectedMonth));
-
-    const filtered = users
-      .map(user => {
-        // Filter attendanceLog for the selected month
-        const monthAttendance = (user.attendanceLog || []).filter(entry =>
-          isWithinInterval(entry.timestamp, { start: monthStart, end: monthEnd })
-        );
-        return {
-          ...user,
-          monthAttendance
-        };
-      })
-      .filter(user => {
-        // Always show all users except admin, filtered by search
-        const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          user.secretCode.toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch;
-      });
-
-    setFilteredUsers(filtered);
-  };
-
   const handleUserAdded = () => {
     loadUsers(); // Reload the users list
+  };
+
+  // Calculate hours for the selected date range
+  const calculateHoursForRange = (attendanceLog: AttendanceEntry[]) => {
+    const rangeStart = startDate ? new Date(startDate) : null;
+    const rangeEnd = endDate ? new Date(endDate + 'T23:59:59') : null;
+    
+    const filteredEntries = attendanceLog.filter(entry => {
+      if (!rangeStart && !rangeEnd) return true;
+      const entryDate = new Date(entry.timestamp);
+      if (rangeStart && entryDate < rangeStart) return false;
+      if (rangeEnd && entryDate > rangeEnd) return false;
+      return true;
+    });
+
+    // Use the same calculation logic as calculateTotalHoursThisMonth but for filtered entries
+    let totalHours = 0;
+    const dailyEntries = new Map<string, AttendanceEntry[]>();
+    
+    filteredEntries.forEach(entry => {
+      const dateKey = new Date(entry.timestamp).toISOString().split('T')[0];
+      if (!dailyEntries.has(dateKey)) {
+        dailyEntries.set(dateKey, []);
+      }
+      dailyEntries.get(dateKey)!.push(entry);
+    });
+    
+    dailyEntries.forEach(entries => {
+      for (let i = 0; i < entries.length; i += 2) {
+        const inEntry = entries[i];
+        const outEntry = entries[i + 1];
+        
+        if (inEntry && outEntry && inEntry.type === 'IN' && outEntry.type === 'OUT') {
+          const minutesWorked = (new Date(outEntry.timestamp).getTime() - new Date(inEntry.timestamp).getTime()) / (1000 * 60);
+          totalHours += minutesWorked / 60;
+        }
+      }
+    });
+    
+    return totalHours;
   };
 
   const exportToExcel = () => {
@@ -104,17 +158,17 @@ const AdminMain: React.FC = () => {
       'Secret Code': user.secretCode,
       'Hourly Rate': user.hourlyRate || 0,
       'Total Amount': user.amount || 0,
-      'Total Hours This Month': calculateTotalHoursThisMonth(user.attendanceLog || [])
+      'Total Hours (Date Range)': calculateHoursForRange(user.attendanceLog || [])
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Users');
-    XLSX.writeFile(wb, `attendance_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `attendance_report_${startDate}_to_${endDate}.xlsx`);
   };
 
   const exportToCSV = () => {
-    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Hours This Month'];
+    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Hours (Date Range)'];
     const csvData = [
       headers.join(','),
       ...filteredUsers.map(user => [
@@ -122,7 +176,7 @@ const AdminMain: React.FC = () => {
         user.secretCode,
         user.hourlyRate || 0,
         user.amount || 0,
-        calculateTotalHoursThisMonth(user.attendanceLog || [])
+        calculateHoursForRange(user.attendanceLog || [])
       ].join(','))
     ].join('\n');
 
@@ -130,23 +184,12 @@ const AdminMain: React.FC = () => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `attendance_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `attendance_report_${startDate}_to_${endDate}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
 
-  const getMonthOptions = () => {
-    const months = [];
-    const currentDate = new Date();
-    for (let i = 0; i < 12; i++) {
-      const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-      months.push({
-        value: date.getMonth(),
-        label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      });
-    }
-    return months;
-  };
+
 
   const handleDeleteUser = (userId: string) => {
     setDeleteUserId(userId);
@@ -278,24 +321,32 @@ const AdminMain: React.FC = () => {
               />
             </div>
 
-            {/* Month Filter */}
+            {/* Date Range Filter */}
             <div className="flex items-center space-x-2">
               <Filter className={`${isDarkMode ? 'text-slate-400' : 'text-slate-400'} w-5 h-5`} />
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                className={`border rounded-md px-3 py-2 focus:ring-2 focus:border-transparent ${
-                  isDarkMode
-                    ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
-                    : 'border-slate-300 text-slate-800 focus:ring-blue-500'
-                }`}
-              >
-                {getMonthOptions().map(month => (
-                  <option key={month.value} value={month.value}>
-                    {month.label}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className={`border rounded-md px-3 py-2 focus:ring-2 focus:border-transparent text-sm ${
+                    isDarkMode
+                      ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                      : 'border-slate-300 text-slate-800 focus:ring-blue-500'
+                  }`}
+                />
+                <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>to</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className={`border rounded-md px-3 py-2 focus:ring-2 focus:border-transparent text-sm ${
+                    isDarkMode
+                      ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                      : 'border-slate-300 text-slate-800 focus:ring-blue-500'
+                  }`}
+                />
+              </div>
             </div>
           </div>
           <div className="flex space-x-2 items-center mt-4 md:mt-0">
@@ -358,7 +409,7 @@ const AdminMain: React.FC = () => {
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
                   isDarkMode ? 'text-slate-300' : 'text-slate-500'
                 }`}>
-                  Hours This Month
+                  Hours (Date Range)
                 </th>
                 <th className={`px-6 py-3 text-right text-xs font-medium uppercase tracking-wider ${
                   isDarkMode ? 'text-slate-300' : 'text-slate-500'
@@ -398,10 +449,10 @@ const AdminMain: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>£{(calculateMonthlyHours(user.monthAttendance || [], selectedMonth, new Date().getFullYear()) * user.hourlyRate).toFixed(2)}</div>
+                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>£{(calculateHoursForRange(user.attendanceLog || []) * user.hourlyRate).toFixed(2)}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{formatHoursAndMinutes(calculateMonthlyHours(user.monthAttendance || [], selectedMonth, new Date().getFullYear()))}</div>
+                    <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{formatHoursAndMinutes(calculateHoursForRange(user.attendanceLog || []))}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     <div className="flex items-center justify-end gap-2">

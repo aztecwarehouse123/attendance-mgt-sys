@@ -12,14 +12,7 @@ import { User, AttendanceEntry } from '../types';
 
 type CodeEntryProps = object;
 
-// Utility to convert Firestore Timestamp, Date, or string to JS Date
-function toJSDate(ts: unknown): Date {
-  if (ts instanceof Date) return ts;
-  if (ts && typeof (ts as { toDate?: () => Date }).toDate === 'function') {
-    return (ts as { toDate: () => Date }).toDate();
-  }
-  return new Date(ts as string);
-}
+
 
 const CodeEntry: React.FC<CodeEntryProps> = () => {
   const [code, setCode] = useState('');
@@ -33,6 +26,17 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
   const [forgotOutDate, setForgotOutDate] = useState<Date | null>(null);
   const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [pendingNow, setPendingNow] = useState<Date | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userState, setUserState] = useState<{
+    lastPunchType: 'IN' | 'OUT' | null;
+    isPunchedIn: boolean;
+    isOnBreak: boolean;
+    canPunchIn: boolean;
+    canPunchOut: boolean;
+    canStartBreak: boolean;
+    canEndBreak: boolean;
+  } | null>(null);
+
 
   // Helper toJSDate
   function toJSDate(ts: unknown): Date {
@@ -41,6 +45,66 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       return (ts as { toDate: () => Date }).toDate();
     }
     return new Date(ts as string);
+  }
+
+  // Helper to get current user state for validation
+  function getUserState(user: User) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEntries = (user.attendanceLog || []).filter((entry: AttendanceEntry) => {
+      const entryDate = toJSDate(entry.timestamp);
+      return (
+        entryDate.getFullYear() === today.getFullYear() &&
+        entryDate.getMonth() === today.getMonth() &&
+        entryDate.getDate() === today.getDate()
+      );
+    });
+
+    if (todayEntries.length === 0) {
+      return {
+        lastPunchType: null,
+        isPunchedIn: false,
+        isOnBreak: false,
+        canPunchIn: true,
+        canPunchOut: false,
+        canStartBreak: false,
+        canEndBreak: false
+      };
+    }
+
+    const lastPunchType = todayEntries[todayEntries.length - 1].type;
+    const isPunchedIn = lastPunchType === 'IN';
+    
+    // Determine if user is on break by analyzing the sequence
+    let isOnBreak = false;
+    
+    if (!isPunchedIn && todayEntries.length > 0) {
+
+      
+      // Logic: determine if user is on break vs done for the day
+      // Pattern: IN(1) -> OUT(2) -> IN(3) -> OUT(4) -> IN(5) -> OUT(6)...
+      // If even number of entries ending with OUT → user is on break (positions 2, 6, 10...)
+      // If entries divisible by 4 ending with OUT → user is done for day (positions 4, 8, 12...)
+      const entryCount = todayEntries.length;
+      
+      if (entryCount % 4 === 2) {
+        isOnBreak = true; // Positions 2, 6, 10... = on break
+      } else if (entryCount % 4 === 0) {
+        isOnBreak = false; // Positions 4, 8, 12... = done for day
+      } else {
+        isOnBreak = false; // Shouldn't happen with OUT as last entry
+      }
+    }
+
+    return {
+      lastPunchType,
+      isPunchedIn,
+      isOnBreak,
+      canPunchIn: !isPunchedIn && !isOnBreak, // Can punch in if not working and not on break
+      canPunchOut: isPunchedIn, // Can punch out if currently working
+      canStartBreak: isPunchedIn, // Can only start break if currently working
+      canEndBreak: isOnBreak // Can end break only if currently on break
+    };
   }
 
   // Helper to get yesterday's last punch
@@ -64,7 +128,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
     return null;
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, breakAction?: 'break-in' | 'break-out') => {
     e.preventDefault();
     if (!code.trim()) return;
 
@@ -108,6 +172,44 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       }
 
       const now = new Date();
+      
+      // Get current user state for validation
+      const userState = getUserState(user);
+      
+      // Validate break actions
+      if (breakAction === 'break-in' && !userState.canStartBreak) {
+        setMessage('You must be punched in to start a break.');
+        setMessageType('error');
+        setIsLoading(false);
+        setCode('');
+        return;
+      }
+      
+      if (breakAction === 'break-out' && !userState.canEndBreak) {
+        setMessage('You must be on a break to end break. Start a break first.');
+        setMessageType('error');
+        setIsLoading(false);
+        setCode('');
+        return;
+      }
+      
+      // Validate regular punch actions
+      if (!breakAction && !userState.canPunchIn && !userState.canPunchOut) {
+        setMessage('Invalid punch state. Please contact administrator.');
+        setMessageType('error');
+        setIsLoading(false);
+        setCode('');
+        return;
+      }
+      
+      if (!breakAction && userState.isOnBreak) {
+        setMessage('You are currently on a break. Please end your break before punching in/out.');
+        setMessageType('error');
+        setIsLoading(false);
+        setCode('');
+        return;
+      }
+
       // Filter today's entries
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const todayEntries = (user.attendanceLog || []).filter((entry: AttendanceEntry) => {
@@ -124,8 +226,8 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       }
       const punchType = lastPunchTypeToday === 'IN' ? 'OUT' : 'IN';
 
-      // Prevent double IN or double OUT
-      if (lastPunchTypeToday === punchType) {
+      // Additional validation for regular punches (non-break actions)
+      if (!breakAction && lastPunchTypeToday === punchType) {
         setMessage(`You have already punched ${punchType} today. Please punch the other type first.`);
         setMessageType('error');
         setIsLoading(false);
@@ -192,13 +294,29 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         date: formatDate(now)
       });
 
+
+
+      // Determine the message based on break action or regular punch
+      let actionMessage = '';
+      if (breakAction === 'break-in') {
+        actionMessage = 'Started Break';
+      } else if (breakAction === 'break-out') {
+        actionMessage = 'Ended Break';
+      } else {
+        actionMessage = punchType === 'IN' ? 'Punched IN' : 'Punched OUT';
+      }
+
       setMessage(
-        `${user.name} - ${punchType === 'IN' ? 'Punched IN' : 'Punched OUT'} at ${formatTime(now)}${
-          punchType === 'OUT' ? ` | Earned: £${amountEarned.toFixed(2)}` : ''
+        `${user.name} - ${actionMessage} at ${formatTime(now)}${
+          punchType === 'OUT' && !breakAction ? ` | Earned: £${amountEarned.toFixed(2)}` : ''
         }`
       );
       setMessageType('success');
       setCode('');
+      
+      // Reset user state after successful action
+      setCurrentUser(null);
+      setUserState(null);
     } catch (error) {
       setMessage('Error processing punch. Please try again.');
       setMessageType('error');
@@ -251,6 +369,42 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
   const handleClear = () => {
     setCode('');
     setMessage('');
+    setCurrentUser(null);
+    setUserState(null);
+  };
+
+  const handleBreakAction = async (action: 'break-in' | 'break-out') => {
+    if (!code.trim()) {
+      setMessage('Please enter your code first');
+      setMessageType('error');
+      return;
+    }
+    
+    const mockEvent = { preventDefault: () => {} } as React.FormEvent;
+    await handleSubmit(mockEvent, action);
+  };
+
+  // Function to update user state when code changes
+  const updateUserState = async (secretCode: string) => {
+    if (!secretCode.trim()) {
+      setCurrentUser(null);
+      setUserState(null);
+      return;
+    }
+
+    try {
+      const user = await getUserBySecretCode(secretCode);
+      if (user) {
+        setCurrentUser(user);
+        setUserState(getUserState(user));
+      } else {
+        setCurrentUser(null);
+        setUserState(null);
+      }
+    } catch {
+      setCurrentUser(null);
+      setUserState(null);
+    }
   };
 
   return (
@@ -302,7 +456,16 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
             <input
               type="password"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => {
+                const newCode = e.target.value;
+                setCode(newCode);
+                if (newCode.length >= 4) { // Check state when code is long enough
+                  updateUserState(newCode);
+                } else {
+                  setCurrentUser(null);
+                  setUserState(null);
+                }
+              }}
               placeholder="Enter secret code"
               className={`w-full px-6 py-4 text-2xl text-center border-2 rounded-xl focus:ring-2 outline-none transition-all ${
                 isDarkMode
@@ -368,19 +531,87 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
             </motion.button>
             <motion.button
               type="submit"
-              disabled={isLoading || !code}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              disabled={isLoading || !code || (!userState?.canPunchIn && !userState?.canPunchOut)}
+              className={`font-semibold py-4 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                userState?.canPunchIn || userState?.canPunchOut
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-slate-400 text-slate-200 cursor-not-allowed'
+              }`}
+              whileHover={(userState?.canPunchIn || userState?.canPunchOut) ? { scale: 1.05 } : {}}
+              whileTap={(userState?.canPunchIn || userState?.canPunchOut) ? { scale: 0.95 } : {}}
             >
-              {isLoading ? '...' : 'Enter'}
+              {isLoading ? '...' : 
+                userState?.canPunchIn ? 'Punch IN' : 
+                userState?.canPunchOut ? 'Punch OUT' : 
+                'Enter'}
             </motion.button>
           </div>
         </form>
 
+        {/* Break Buttons */}
+        <div className="mt-6 space-y-3">
+          {/* Current Status Display */}
+          {currentUser && userState && (
+            <div className={`text-center p-2 rounded-lg text-sm ${
+              isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'
+            }`}>
+              <span className="font-medium">{currentUser.name}</span> - 
+              {userState.isPunchedIn ? (
+                <span className="text-green-600 font-medium"> Currently Working</span>
+              ) : userState.isOnBreak ? (
+                <span className="text-orange-600 font-medium"> On Break</span>
+              ) : (
+                <span className="text-slate-600 font-medium"> Not Punched In</span>
+              )}
+            </div>
+          )}
+          
+          <div className="flex space-x-3">
+            <motion.button
+              type="button"
+              onClick={() => handleBreakAction('break-in')}
+              disabled={isLoading || !code || !userState?.canStartBreak}
+              className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                userState?.canStartBreak
+                  ? isDarkMode 
+                    ? 'bg-orange-900/50 hover:bg-orange-800/50 text-orange-300 border border-orange-700' 
+                    : 'bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-300'
+                  : isDarkMode
+                    ? 'bg-slate-800 text-slate-500 border border-slate-700'
+                    : 'bg-slate-200 text-slate-400 border border-slate-300'
+              }`}
+              whileHover={userState?.canStartBreak ? { scale: 1.02 } : {}}
+              whileTap={userState?.canStartBreak ? { scale: 0.98 } : {}}
+            >
+              Start Break
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => handleBreakAction('break-out')}
+              disabled={isLoading || !code || !userState?.canEndBreak}
+              className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                userState?.canEndBreak
+                  ? isDarkMode 
+                    ? 'bg-green-900/50 hover:bg-green-800/50 text-green-300 border border-green-700' 
+                    : 'bg-green-100 hover:bg-green-200 text-green-800 border border-green-300'
+                  : isDarkMode
+                    ? 'bg-slate-800 text-slate-500 border border-slate-700'
+                    : 'bg-slate-200 text-slate-400 border border-slate-300'
+              }`}
+              whileHover={userState?.canEndBreak ? { scale: 1.02 } : {}}
+              whileTap={userState?.canEndBreak ? { scale: 0.98 } : {}}
+            >
+              End Break
+            </motion.button>
+          </div>
+        </div>
+
         <div className="mt-8 text-center">
           <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             Touch a number to enter your code, then press Enter
+          </p>
+          <p className={`text-xs mt-2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+            Use break buttons for break time management
           </p>
         </div>
       </motion.div>

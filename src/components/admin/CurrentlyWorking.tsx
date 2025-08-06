@@ -4,7 +4,7 @@ import { User, AttendanceEntry } from '../../types';
 import { getLastPunchType } from '../../utils/timeCalculations';
 import { startOfDay } from 'date-fns';
 import { useTheme } from '../../contexts/ThemeContext';
-import { RotateCw } from 'lucide-react';
+import { RotateCw, Coffee } from 'lucide-react';
 
 const CurrentlyWorking: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -42,6 +42,48 @@ const CurrentlyWorking: React.FC = () => {
     return null;
   };
 
+  // Helper to get last OUT punch time for today
+  const getLastOutTime = (attendanceLog: AttendanceEntry[]): Date | null => {
+    const todayStart = startOfDay(new Date());
+    const todayEntries = attendanceLog.filter(entry => {
+      const entryDate = new Date(entry.timestamp);
+      return entryDate >= todayStart;
+    });
+    for (let i = todayEntries.length - 1; i >= 0; i--) {
+      if (todayEntries[i].type === 'OUT') {
+        return new Date(todayEntries[i].timestamp);
+      }
+    }
+    return null;
+  };
+
+  // Helper to determine if user is currently on break
+  const isUserOnBreak = (attendanceLog: AttendanceEntry[]): boolean => {
+    const todayStart = startOfDay(new Date());
+    const todayEntries = attendanceLog.filter(entry => {
+      const entryDate = new Date(entry.timestamp);
+      return entryDate >= todayStart;
+    });
+
+    if (todayEntries.length === 0) return false;
+
+    const lastPunchType = todayEntries[todayEntries.length - 1].type;
+    if (lastPunchType !== 'OUT') return false;
+
+    // Use the same logic as in CodeEntry: determine break status by entry count
+    const entryCount = todayEntries.length;
+    
+    // If entries divisible by 4 ending with OUT → user is done for day (positions 4, 8, 12...)
+    // If entries mod 4 equals 2 ending with OUT → user is on break (positions 2, 6, 10...)
+    if (entryCount % 4 === 2) {
+      return true; // Positions 2, 6, 10... = on break
+    } else if (entryCount % 4 === 0) {
+      return false; // Positions 4, 8, 12... = done for day
+    } else {
+      return false; // Other positions shouldn't happen with OUT as last entry
+    }
+  };
+
   // Helper to group attendance by date and find missed punch outs
   const getForgotToPunchOut = () => {
     const todayStr = new Date().toDateString();
@@ -73,6 +115,7 @@ const CurrentlyWorking: React.FC = () => {
   };
 
   const currentlyWorking = users.filter(user => getLastPunchType(user.attendanceLog) === 'IN');
+  const currentlyOnBreak = users.filter(user => isUserOnBreak(user.attendanceLog));
   const forgotToPunchOut = getForgotToPunchOut();
 
   return (
@@ -81,7 +124,12 @@ const CurrentlyWorking: React.FC = () => {
         {isRefreshing && <span className="text-xs text-slate-400">Refreshing...</span>}
         <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''} text-blue-400`} aria-label="Refreshing" />
       </div>
-      <h2 className={`text-2xl font-bold mb-6 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>Currently Working</h2>
+      <h2 className={`text-2xl font-bold mb-6 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+        Currently Working 
+        <span className={`ml-2 px-2 py-1 rounded-full text-sm font-medium ${isDarkMode ? 'bg-green-900/50 text-green-300' : 'bg-green-100 text-green-800'}`}>
+          {currentlyWorking.length}
+        </span>
+      </h2>
       <div className={`mb-6 p-4 rounded-lg shadow-lg ${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'}`}>
         {loading ? (
           <div>Loading...</div>
@@ -124,6 +172,58 @@ const CurrentlyWorking: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Currently on Break Section */}
+      <div className="flex items-center mb-4">
+        <Coffee className={`w-6 h-6 mr-2 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`} />
+        <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>Currently on Break</h3>
+        <span className={`ml-2 px-2 py-1 rounded-full text-sm font-medium ${isDarkMode ? 'bg-orange-900/50 text-orange-300' : 'bg-orange-100 text-orange-800'}`}>
+          {currentlyOnBreak.length}
+        </span>
+      </div>
+      <div className={`mb-6 p-4 rounded-lg shadow-lg border-l-4 ${isDarkMode ? 'bg-slate-700 text-slate-200 border-orange-400' : 'bg-orange-50 text-slate-800 border-orange-500'}`}>
+        {loading ? (
+          <div>Loading...</div>
+        ) : currentlyOnBreak.length === 0 ? (
+          <div>No users are currently on break.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className={isDarkMode ? 'bg-slate-800 text-slate-200' : 'bg-slate-200 text-slate-800'}>
+                <tr>
+                  <th className="px-4 py-2 text-left font-semibold">Name</th>
+                  <th className="px-4 py-2 text-left font-semibold">Secret Code</th>
+                  <th className="px-4 py-2 text-left font-semibold">Break Started</th>
+                  <th className="px-4 py-2 text-left font-semibold">Break Duration</th>
+                </tr>
+              </thead>
+              <tbody className={isDarkMode ? 'bg-slate-700' : 'bg-white'}>
+                {currentlyOnBreak.map(user => {
+                  const lastOut = getLastOutTime(user.attendanceLog);
+                  let breakDuration = '';
+                  if (lastOut) {
+                    const now = new Date();
+                    const diffMs = now.getTime() - lastOut.getTime();
+                    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+                    const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
+                    const seconds = Math.floor((diffMs / 1000) % 60);
+                    breakDuration = `${hours}h ${minutes}m ${seconds}s`;
+                  }
+                  return (
+                    <tr key={user.id} className="border-b border-gray-300">
+                      <td className="px-4 py-2 whitespace-nowrap">{user.name}</td>
+                      <td className="px-4 py-2 whitespace-nowrap">{user.secretCode}</td>
+                      <td className="px-4 py-2 whitespace-nowrap">{lastOut ? lastOut.toLocaleTimeString() : '-'}</td>
+                      <td className="px-4 py-2 whitespace-nowrap">{breakDuration}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Forgot to Punch Out Section */}
       <h3 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>Forgot to Punch Out</h3>
       <div className={`mb-6 p-4 rounded-lg shadow-lg ${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'}`}>
