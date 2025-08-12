@@ -362,7 +362,15 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
   const handleNumberClick = (num: string) => {
     if (code.length < 8) {
-      setCode(code + num);
+      const newCode = code + num;
+      setCode(newCode);
+      // Update user state when code changes via keypad
+      if (newCode.length >= 4) {
+        updateUserState(newCode);
+      } else {
+        setCurrentUser(null);
+        setUserState(null);
+      }
     }
   };
 
@@ -401,7 +409,8 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         setCurrentUser(null);
         setUserState(null);
       }
-    } catch {
+    } catch (error) {
+      console.error('Error updating user state:', error);
       setCurrentUser(null);
       setUserState(null);
     }
