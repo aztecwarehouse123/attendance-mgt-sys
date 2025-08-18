@@ -308,7 +308,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
       setMessage(
         `${user.name} - ${actionMessage} at ${formatTime(now)}${
-          punchType === 'OUT' && !breakAction ? ` | Earned: £${amountEarned.toFixed(2)}` : ''
+          punchType === 'OUT' && !breakAction ? `` : ''
         }`
       );
       setMessageType('success');
