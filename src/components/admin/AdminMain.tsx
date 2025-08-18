@@ -76,7 +76,7 @@ const AdminMain: React.FC = () => {
     const interval = setInterval(() => {
       setIsRefreshing(true);
       loadUsers();
-    }, 30000);
+    }, 300000);
     return () => clearInterval(interval);
   }, []);
 

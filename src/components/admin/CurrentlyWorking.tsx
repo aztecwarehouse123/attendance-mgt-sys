@@ -23,7 +23,7 @@ const CurrentlyWorking: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
-    const interval = setInterval(fetchUsers, 30000); // Refresh every 30s
+    const interval = setInterval(fetchUsers, 300000); // Refresh every 30s
     return () => clearInterval(interval);
   }, []);
 

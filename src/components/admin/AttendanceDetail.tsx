@@ -33,7 +33,7 @@ const AttendanceDetail: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
-    const interval = setInterval(fetchUsers, 30000);
+    const interval = setInterval(fetchUsers, 300000);
     return () => clearInterval(interval);
   }, []);
 
