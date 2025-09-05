@@ -93,3 +93,80 @@ export const calculateTotalHoursThisMonth = (attendanceLog: AttendanceEntry[]): 
   const now = new Date();
   return calculateMonthlyHours(attendanceLog, now.getMonth(), now.getFullYear());
 };
+
+export const calculateTotalBreaks = (attendanceLog: AttendanceEntry[]): number => {
+  let totalBreakMinutes = 0;
+  const dailyEntries = new Map<string, AttendanceEntry[]>();
+  
+  // Group entries by date
+  attendanceLog.forEach(entry => {
+    const dateKey = formatDate(new Date(entry.timestamp));
+    if (!dailyEntries.has(dateKey)) {
+      dailyEntries.set(dateKey, []);
+    }
+    dailyEntries.get(dateKey)!.push(entry);
+  });
+  
+  // Calculate breaks for each day
+  dailyEntries.forEach(entries => {
+    // Sort entries by timestamp
+    entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    for (let i = 0; i < entries.length - 1; i++) {
+      const currentEntry = entries[i];
+      const nextEntry = entries[i + 1];
+      
+      // Break occurs when current entry is OUT and next entry is IN
+      if (currentEntry.type === 'OUT' && nextEntry.type === 'IN') {
+        const breakMinutes = differenceInMinutes(
+          new Date(nextEntry.timestamp),
+          new Date(currentEntry.timestamp)
+        );
+        totalBreakMinutes += breakMinutes;
+      }
+    }
+  });
+  
+  return totalBreakMinutes / 60; // Convert to hours
+};
+
+export const calculateBreaksWithCount = (attendanceLog: AttendanceEntry[]): { totalHours: number; count: number } => {
+  let totalBreakMinutes = 0;
+  let breakCount = 0;
+  const dailyEntries = new Map<string, AttendanceEntry[]>();
+  
+  // Group entries by date
+  attendanceLog.forEach(entry => {
+    const dateKey = formatDate(new Date(entry.timestamp));
+    if (!dailyEntries.has(dateKey)) {
+      dailyEntries.set(dateKey, []);
+    }
+    dailyEntries.get(dateKey)!.push(entry);
+  });
+  
+  // Calculate breaks for each day
+  dailyEntries.forEach(entries => {
+    // Sort entries by timestamp
+    entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    for (let i = 0; i < entries.length - 1; i++) {
+      const currentEntry = entries[i];
+      const nextEntry = entries[i + 1];
+      
+      // Break occurs when current entry is OUT and next entry is IN
+      if (currentEntry.type === 'OUT' && nextEntry.type === 'IN') {
+        const breakMinutes = differenceInMinutes(
+          new Date(nextEntry.timestamp),
+          new Date(currentEntry.timestamp)
+        );
+        totalBreakMinutes += breakMinutes;
+        breakCount++;
+      }
+    }
+  });
+  
+  return {
+    totalHours: totalBreakMinutes / 60, // Convert to hours
+    count: breakCount
+  };
+};

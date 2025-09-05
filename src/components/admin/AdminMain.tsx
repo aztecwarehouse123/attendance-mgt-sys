@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, UserPlus, Edit2, Trash2, RotateCw } from 'lucide-react';
 import { getAllUsers, deleteUser, updateUser } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
-import { calculateTotalHoursThisMonth } from '../../utils/timeCalculations';
+import { calculateTotalHoursThisMonth, calculateTotalBreaks, calculateBreaksWithCount } from '../../utils/timeCalculations';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import AddUserModal from '../AddUserModal';
@@ -152,14 +152,72 @@ const AdminMain: React.FC = () => {
     return totalHours;
   };
 
+  // Calculate breaks for the selected date range
+  const calculateBreaksForRange = (attendanceLog: AttendanceEntry[]) => {
+    const rangeStart = startDate ? new Date(startDate) : null;
+    const rangeEnd = endDate ? new Date(endDate + 'T23:59:59') : null;
+    
+    const filteredEntries = attendanceLog.filter(entry => {
+      if (!rangeStart && !rangeEnd) return true;
+      const entryDate = new Date(entry.timestamp);
+      if (rangeStart && entryDate < rangeStart) return false;
+      if (rangeEnd && entryDate > rangeEnd) return false;
+      return true;
+    });
+
+    let totalBreakMinutes = 0;
+    let breakCount = 0;
+    const dailyEntries = new Map<string, AttendanceEntry[]>();
+    
+    // Group entries by date
+    filteredEntries.forEach(entry => {
+      const dateKey = new Date(entry.timestamp).toISOString().split('T')[0];
+      if (!dailyEntries.has(dateKey)) {
+        dailyEntries.set(dateKey, []);
+      }
+      dailyEntries.get(dateKey)!.push(entry);
+    });
+    
+    // Calculate breaks for each day
+    dailyEntries.forEach(entries => {
+      // Sort entries by timestamp
+      entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
+      for (let i = 0; i < entries.length - 1; i++) {
+        const currentEntry = entries[i];
+        const nextEntry = entries[i + 1];
+        
+        // Break occurs when current entry is OUT and next entry is IN
+        if (currentEntry.type === 'OUT' && nextEntry.type === 'IN') {
+          const breakMinutes = (new Date(nextEntry.timestamp).getTime() - new Date(currentEntry.timestamp).getTime()) / (1000 * 60);
+          totalBreakMinutes += breakMinutes;
+          breakCount++;
+        }
+      }
+    });
+    
+    return {
+      totalHours: totalBreakMinutes / 60, // Convert to hours
+      count: breakCount
+    };
+  };
+
   const exportToExcel = () => {
-    const data = filteredUsers.map(user => ({
-      Name: user.name,
-      'Secret Code': user.secretCode,
-      'Hourly Rate': user.hourlyRate || 0,
-      'Total Amount': user.amount || 0,
-      'Total Hours (Date Range)': calculateHoursForRange(user.attendanceLog || [])
-    }));
+    const data = filteredUsers.map(user => {
+      const breaks = calculateBreaksForRange(user.attendanceLog || []);
+      const workHours = calculateHoursForRange(user.attendanceLog || []);
+      const totalHoursWithBreaks = workHours + breaks.totalHours;
+      return {
+        Name: user.name,
+        'Secret Code': user.secretCode,
+        'Hourly Rate': user.hourlyRate || 0,
+        'Total Amount': user.amount || 0,
+        'Total Amount (Including Breaks)': (totalHoursWithBreaks * user.hourlyRate).toFixed(2),
+        'Total Breaks (Date Range)': breaks.totalHours,
+        'Number of Breaks': breaks.count,
+        'Total Hours (Date Range)': workHours
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -168,16 +226,24 @@ const AdminMain: React.FC = () => {
   };
 
   const exportToCSV = () => {
-    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Hours (Date Range)'];
+    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Amount (Including Breaks)', 'Total Breaks (Date Range)', 'Number of Breaks', 'Total Hours (Date Range)'];
     const csvData = [
       headers.join(','),
-      ...filteredUsers.map(user => [
-        user.name,
-        user.secretCode,
-        user.hourlyRate || 0,
-        user.amount || 0,
-        calculateHoursForRange(user.attendanceLog || [])
-      ].join(','))
+      ...filteredUsers.map(user => {
+        const breaks = calculateBreaksForRange(user.attendanceLog || []);
+        const workHours = calculateHoursForRange(user.attendanceLog || []);
+        const totalHoursWithBreaks = workHours + breaks.totalHours;
+        return [
+          user.name,
+          user.secretCode,
+          user.hourlyRate || 0,
+          user.amount || 0,
+          (totalHoursWithBreaks * user.hourlyRate).toFixed(2),
+          breaks.totalHours,
+          breaks.count,
+          workHours
+        ].join(',');
+      })
     ].join('\n');
 
     const blob = new Blob([csvData], { type: 'text/csv' });
@@ -409,6 +475,16 @@ const AdminMain: React.FC = () => {
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
                   isDarkMode ? 'text-slate-300' : 'text-slate-500'
                 }`}>
+                  Total Amount (Including Breaks)
+                </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                  isDarkMode ? 'text-slate-300' : 'text-slate-500'
+                }`}>
+                  Total Breaks
+                </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                  isDarkMode ? 'text-slate-300' : 'text-slate-500'
+                }`}>
                   Hours (Date Range)
                 </th>
                 <th className={`px-6 py-3 text-right text-xs font-medium uppercase tracking-wider ${
@@ -450,6 +526,24 @@ const AdminMain: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>£{(calculateHoursForRange(user.attendanceLog || []) * user.hourlyRate).toFixed(2)}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className={`text-sm font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+                      {(() => {
+                        const workHours = calculateHoursForRange(user.attendanceLog || []);
+                        const breaks = calculateBreaksForRange(user.attendanceLog || []);
+                        const totalHours = workHours + breaks.totalHours;
+                        return `£${(totalHours * user.hourlyRate).toFixed(2)}`;
+                      })()}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className={`text-sm ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
+                      {(() => {
+                        const breaks = calculateBreaksForRange(user.attendanceLog || []);
+                        return `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`;
+                      })()}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{formatHoursAndMinutes(calculateHoursForRange(user.attendanceLog || []))}</div>
