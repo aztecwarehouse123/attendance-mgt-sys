@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Key, Clock, CheckCircle, Moon, Sun } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Key, Clock, CheckCircle, Moon, Sun, Calendar, Search } from 'lucide-react';
 import { getUserBySecretCode, updateUserAttendance, createAttendanceRecord } from '../services/firestore';
 import { formatDate, formatTime } from '../utils/timeCalculations';
 import { useTheme } from '../contexts/ThemeContext';
@@ -8,6 +8,8 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal';
+import HolidayRequestModal from './HolidayRequestModal';
+import HolidayStatusModal from './HolidayStatusModal';
 import { User, AttendanceEntry } from '../types';
 
 type CodeEntryProps = object;
@@ -36,6 +38,19 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
     canStartBreak: boolean;
     canEndBreak: boolean;
   } | null>(null);
+  const [showHolidayRequestModal, setShowHolidayRequestModal] = useState(false);
+  const [showHolidayStatusModal, setShowHolidayStatusModal] = useState(false);
+
+  // Auto-hide success message after 5 seconds
+  useEffect(() => {
+    if (messageType === 'success' && message) {
+      const timer = setTimeout(() => {
+        setMessage('');
+        setMessageType('info');
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [messageType, message]);
 
 
   // Helper toJSDate
@@ -615,6 +630,40 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           </div>
         </div>
 
+        {/* Holiday Request Buttons */}
+        <div className="mt-6 space-y-3">
+          <div className="flex space-x-3">
+            <motion.button
+              type="button"
+              onClick={() => setShowHolidayRequestModal(true)}
+              className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center space-x-2 ${
+                isDarkMode 
+                  ? 'bg-purple-900/50 hover:bg-purple-800/50 text-purple-300 border border-purple-700' 
+                  : 'bg-purple-100 hover:bg-purple-200 text-purple-800 border border-purple-300'
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>Request Holiday</span>
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => setShowHolidayStatusModal(true)}
+              className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center space-x-2 ${
+                isDarkMode 
+                  ? 'bg-indigo-900/50 hover:bg-indigo-800/50 text-indigo-300 border border-indigo-700' 
+                  : 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800 border border-indigo-300'
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <Search className="w-4 h-4" />
+              <span>Check Status</span>
+            </motion.button>
+          </div>
+        </div>
+
         <div className="mt-8 text-center">
           <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             Touch a number to enter your code, then press Enter
@@ -657,7 +706,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
             max="23:59"
             required
           />
-          <div className="flex justify-end space-x-3 pt-2">
+          <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-3 pt-2">
             <button
               type="button"
               onClick={() => setShowForgotModal(false)}
@@ -676,6 +725,22 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Holiday Request Modal */}
+      <HolidayRequestModal
+        isOpen={showHolidayRequestModal}
+        onClose={() => setShowHolidayRequestModal(false)}
+        onSuccess={(message) => {
+          setMessage(message);
+          setMessageType('success');
+        }}
+      />
+
+      {/* Holiday Status Modal */}
+      <HolidayStatusModal
+        isOpen={showHolidayStatusModal}
+        onClose={() => setShowHolidayStatusModal(false)}
+      />
     </div>
   );
 };

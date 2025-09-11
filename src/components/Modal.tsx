@@ -56,17 +56,17 @@ const Modal: React.FC<ModalProps> = ({
   }, [isOpen, onClose]);
 
   const sizeClasses = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-2xl'
+    sm: 'max-w-sm sm:max-w-md',
+    md: 'max-w-md sm:max-w-lg md:max-w-xl',
+    lg: 'max-w-lg sm:max-w-xl md:max-w-2xl',
+    xl: 'max-w-xl sm:max-w-2xl md:max-w-3xl lg:max-w-4xl'
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex min-h-screen items-center justify-center p-4 text-center">
+          <div className="flex min-h-screen items-center justify-center p-2 sm:p-4 text-center">
             <motion.div 
               className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" 
               onClick={onClose}
@@ -77,7 +77,7 @@ const Modal: React.FC<ModalProps> = ({
             
             <motion.div 
               ref={modalRef}
-              className={`relative transform overflow-hidden rounded-lg ${sizeClasses[size]} w-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} p-6 text-left shadow-xl transition-all border`}
+              className={`relative transform overflow-hidden rounded-lg ${sizeClasses[size]} w-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} p-4 sm:p-6 text-left shadow-xl transition-all border max-h-[90vh] overflow-y-auto`}
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}

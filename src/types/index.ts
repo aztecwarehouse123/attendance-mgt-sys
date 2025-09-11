@@ -22,3 +22,18 @@ export interface AttendanceRecord {
   amountEarned?: number;
   date: string;
 }
+
+export interface HolidayRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  secretCode: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: Date;
+  reviewedAt?: Date;
+  reviewedBy?: string;
+  adminNotes?: string;
+}

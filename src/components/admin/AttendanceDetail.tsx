@@ -7,6 +7,13 @@ import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { RotateCw } from 'lucide-react';
 
+// Helper function to format hours as 'X hours Y minutes'
+function formatHoursAndMinutes(decimalHours: number): string {
+  const hours = Math.floor(decimalHours);
+  const minutes = Math.round((decimalHours - hours) * 60);
+  return `${hours} hours ${minutes} minutes`;
+}
+
 const AttendanceDetail: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
@@ -206,6 +213,28 @@ const AttendanceDetail: React.FC = () => {
                 </div>
                 <div>
                   <b>Total Punches:</b> {Math.floor(filteredAttendance.length / 2)}
+                </div>
+                <div>
+                  <b>Total Hours:</b> {(() => {
+                    let totalHours = 0;
+                    // Sort and group by day
+                    const logByDay: { [key: string]: typeof filteredAttendance } = {};
+                    filteredAttendance.forEach(entry => {
+                      const dateKey = format(entry.timestamp, 'yyyy-MM-dd');
+                      if (!logByDay[dateKey]) logByDay[dateKey] = [];
+                      logByDay[dateKey].push(entry);
+                    });
+                    Object.values(logByDay).forEach(log => {
+                      // Calculate hours for each day
+                      const sorted = [...log].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                      for (let i = 0; i < sorted.length - 1; i += 2) {
+                        if (sorted[i].type === 'IN' && sorted[i + 1].type === 'OUT') {
+                          totalHours += (sorted[i + 1].timestamp.getTime() - sorted[i].timestamp.getTime()) / (1000 * 60 * 60);
+                        }
+                      }
+                    });
+                    return formatHoursAndMinutes(totalHours);
+                  })()}
                 </div>
               </div>
             </div>

@@ -12,7 +12,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { User, AttendanceRecord, AttendanceEntry } from '../types';
+import { User, AttendanceRecord, AttendanceEntry, HolidayRequest } from '../types';
 
 export const getUserBySecretCode = async (secretCode: string): Promise<User | null> => {
   try {
@@ -179,6 +179,87 @@ export const deleteUser = async (userId: string): Promise<void> => {
     await deleteDoc(userRef);
   } catch (error) {
     console.error('Error deleting user:', error);
+    throw error;
+  }
+};
+
+// Holiday Request Functions
+export const createHolidayRequest = async (request: Omit<HolidayRequest, 'id' | 'submittedAt'>): Promise<string> => {
+  try {
+    const requestsRef = collection(db, 'holidayRequests');
+    const docRef = await addDoc(requestsRef, {
+      ...request,
+      submittedAt: Timestamp.fromDate(new Date())
+    });
+    return docRef.id;
+  } catch (error) {
+    console.error('Error creating holiday request:', error);
+    throw error;
+  }
+};
+
+export const getAllHolidayRequests = async (): Promise<HolidayRequest[]> => {
+  try {
+    const requestsRef = collection(db, 'holidayRequests');
+    const q = query(requestsRef, orderBy('submittedAt', 'desc'));
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        submittedAt: data.submittedAt.toDate(),
+        reviewedAt: data.reviewedAt ? data.reviewedAt.toDate() : undefined
+      };
+    }) as HolidayRequest[];
+  } catch (error) {
+    console.error('Error fetching holiday requests:', error);
+    return [];
+  }
+};
+
+export const getHolidayRequestsBySecretCode = async (secretCode: string): Promise<HolidayRequest[]> => {
+  try {
+    const requestsRef = collection(db, 'holidayRequests');
+    // First try with just the secretCode filter
+    const q = query(requestsRef, where('secretCode', '==', secretCode));
+    const querySnapshot = await getDocs(q);
+    
+    const requests = querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        submittedAt: data.submittedAt.toDate(),
+        reviewedAt: data.reviewedAt ? data.reviewedAt.toDate() : undefined
+      };
+    }) as HolidayRequest[];
+    
+    // Sort by submittedAt in descending order
+    return requests.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
+  } catch (error) {
+    console.error('Error fetching holiday requests by secret code:', error);
+    return [];
+  }
+};
+
+export const updateHolidayRequestStatus = async (
+  requestId: string,
+  status: 'approved' | 'rejected',
+  reviewedBy: string,
+  adminNotes?: string
+): Promise<void> => {
+  try {
+    const requestRef = doc(db, 'holidayRequests', requestId);
+    await updateDoc(requestRef, {
+      status,
+      reviewedBy,
+      reviewedAt: Timestamp.fromDate(new Date()),
+      adminNotes: adminNotes || ''
+    });
+  } catch (error) {
+    console.error('Error updating holiday request status:', error);
     throw error;
   }
 };
