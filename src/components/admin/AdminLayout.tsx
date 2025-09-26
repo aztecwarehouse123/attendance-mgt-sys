@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { BarChart3, Users, LogOut, Moon, Sun, Settings as SettingsIcon, Calendar } from 'lucide-react';
+import { BarChart3, Users, LogOut, Moon, Sun, Settings as SettingsIcon, Calendar, FileText } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 
@@ -136,6 +136,27 @@ const AdminLayout: React.FC = () => {
               >
                 <Users className="w-4 h-4" />
                 <span>Attendance Detail</span>
+              </Link>
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.45 }}
+            >
+              <Link
+                to="/admin/logs"
+                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
+                  location.pathname === '/admin/logs'
+                    ? isDarkMode
+                      ? 'border-blue-400 text-blue-400'
+                      : 'border-blue-500 text-blue-600'
+                    : isDarkMode
+                      ? 'border-transparent text-slate-300 hover:text-white hover:border-slate-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>Logs</span>
               </Link>
             </motion.div>
             <motion.div

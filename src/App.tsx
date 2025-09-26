@@ -8,6 +8,7 @@ import AdminSettings from './components/admin/AdminSettings';
 import AdminHolidayRequests from './components/admin/AdminHolidayRequests';
 import AttendanceDetail from './components/admin/AttendanceDetail';
 import CurrentlyWorking from './components/admin/CurrentlyWorking';
+import AdminLogs from './components/admin/AdminLogs';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
             <Route path="settings" element={<AdminSettings />} />
             <Route path="attendance-detail" element={<AttendanceDetail />} />
             <Route path="currently-working" element={<CurrentlyWorking />} />
+            <Route path="logs" element={<AdminLogs />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
