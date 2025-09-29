@@ -5,6 +5,25 @@ import { AttendanceRecord, User } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+// Extend jsPDF type to include autoTable
+interface AutoTableOptions {
+  startY?: number;
+  head?: string[][];
+  body?: string[][];
+  styles?: { fontSize?: number };
+  headStyles?: { fillColor?: number[] };
+  alternateRowStyles?: { fillColor?: number[] };
+  margin?: { left?: number; right?: number };
+}
+
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: (options: AutoTableOptions) => jsPDF;
+  }
+}
 
 interface LogEntry extends AttendanceRecord {
   userName: string;
@@ -196,6 +215,40 @@ const AdminLogs: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(16);
+    doc.text('Attendance Logs', 14, 22);
+    doc.setFontSize(10);
+    doc.text(`Date Range: ${startDate} to ${endDate}`, 14, 30);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 36);
+    doc.text(`Total Records: ${filteredLogs.length}`, 14, 42);
+    
+    // Prepare data for table
+    const tableData = filteredLogs.map(log => [
+      log.formattedDate,
+      log.formattedTime,
+      log.userName,
+      log.actionLabel
+    ]);
+
+    // Add table using autoTable
+    autoTable(doc, {
+      startY: 50,
+      head: [['Date', 'Time', 'User Name', 'Action']],
+      body: tableData,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [59, 130, 246] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: 14, right: 14 }
+    });
+
+    // Save the PDF
+    doc.save(`attendance_logs_${startDate}_to_${endDate}.pdf`);
+  };
+
   const handleManualRefresh = () => {
     loadData();
   };
@@ -239,6 +292,13 @@ const AdminLogs: React.FC = () => {
             >
               <Download size={16} />
               <span>Export CSV</span>
+            </button>
+            <button
+              onClick={exportToPDF}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
+            >
+              <Download size={16} />
+              <span>Export PDF</span>
             </button>
             <button
               onClick={handleManualRefresh}

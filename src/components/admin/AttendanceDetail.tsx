@@ -5,7 +5,26 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { RotateCw } from 'lucide-react';
+
+// Extend jsPDF type to include autoTable
+interface AutoTableOptions {
+  startY?: number;
+  head?: string[][];
+  body?: string[][];
+  styles?: { fontSize?: number };
+  headStyles?: { fillColor?: number[] };
+  alternateRowStyles?: { fillColor?: number[] };
+  margin?: { left?: number; right?: number };
+}
+
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: (options: AutoTableOptions) => jsPDF;
+  }
+}
 
 // Helper function to format hours as 'X hours Y minutes'
 function formatHoursAndMinutes(decimalHours: number): string {
@@ -99,6 +118,41 @@ const AttendanceDetail: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  // Export filtered punches to PDF
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(16);
+    doc.text('Attendance Details', 14, 22);
+    doc.setFontSize(10);
+    doc.text(`User: ${selectedUser?.name || 'Unknown'}`, 14, 30);
+    doc.text(`Date Range: ${startDate} to ${endDate}`, 14, 36);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 42);
+    doc.text(`Total Records: ${filteredAttendance.length}`, 14, 48);
+    
+    // Prepare data for table
+    const tableData = filteredAttendance.map(entry => [
+      entry.timestamp.toLocaleDateString(),
+      entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      entry.type
+    ]);
+
+    // Add table using autoTable
+    autoTable(doc, {
+      startY: 55,
+      head: [['Date', 'Time', 'Type']],
+      body: tableData,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [59, 130, 246] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: 14, right: 14 }
+    });
+
+    // Save the PDF
+    doc.save(`attendance_detail_${selectedUser?.name || 'user'}.pdf`);
+  };
+
   // Add manual refresh handler
   const handleManualRefresh = () => {
     fetchUsers();
@@ -131,6 +185,12 @@ const AttendanceDetail: React.FC = () => {
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
               >
                 Export CSV
+              </button>
+              <button
+                onClick={exportToPDF}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
+              >
+                Export PDF
               </button>
               <button
                 onClick={handleManualRefresh}

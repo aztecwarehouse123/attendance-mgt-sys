@@ -2,12 +2,31 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, UserPlus, Edit2, Trash2, RotateCw } from 'lucide-react';
 import { getAllUsers, deleteUser, updateUser } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
-import { calculateTotalHoursThisMonth, calculateTotalBreaks, calculateBreaksWithCount } from '../../utils/timeCalculations';
+import { calculateTotalHoursThisMonth } from '../../utils/timeCalculations';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import AddUserModal from '../AddUserModal';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import Modal from '../Modal';
+
+// Extend jsPDF type to include autoTable
+interface AutoTableOptions {
+  startY?: number;
+  head?: string[][];
+  body?: string[][];
+  styles?: { fontSize?: number };
+  headStyles?: { fillColor?: number[] };
+  alternateRowStyles?: { fillColor?: number[] };
+  margin?: { left?: number; right?: number };
+}
+
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: (options: AutoTableOptions) => jsPDF;
+  }
+}
 
 
 type UserWithMonthAttendance = User & { monthAttendance: AttendanceEntry[] };
@@ -255,6 +274,47 @@ const AdminMain: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(16);
+    doc.text('Attendance Report', 14, 22);
+    doc.setFontSize(10);
+    doc.text(`Date Range: ${startDate} to ${endDate}`, 14, 30);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 36);
+    
+    // Prepare data for table
+    const tableData = filteredUsers.map(user => {
+      const breaks = calculateBreaksForRange(user.attendanceLog || []);
+      const workHours = calculateHoursForRange(user.attendanceLog || []);
+      const totalHoursWithBreaks = workHours + breaks.totalHours;
+      return [
+        user.name,
+        user.secretCode,
+        `£${user.hourlyRate || 0}/hr`,
+        `£${(workHours * user.hourlyRate).toFixed(2)}`,
+        `£${(totalHoursWithBreaks * user.hourlyRate).toFixed(2)}`,
+        `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`,
+        formatHoursAndMinutes(workHours)
+      ];
+    });
+
+    // Add table using autoTable
+    autoTable(doc, {
+      startY: 45,
+      head: [['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Amount (Incl. Breaks)', 'Total Breaks', 'Work Hours']],
+      body: tableData,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [59, 130, 246] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: 14, right: 14 }
+    });
+
+    // Save the PDF
+    doc.save(`attendance_report_${startDate}_to_${endDate}.pdf`);
+  };
+
 
 
   const handleDeleteUser = (userId: string) => {
@@ -427,6 +487,12 @@ const AdminMain: React.FC = () => {
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
             >
               Export CSV
+            </button>
+            <button
+              onClick={exportToPDF}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors"
+            >
+              Export PDF
             </button>
             <button
               onClick={handleManualRefresh}
