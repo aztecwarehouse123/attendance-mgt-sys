@@ -62,6 +62,12 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
   // Helper to get current user state for validation
   function getUserState(user: User): UserState {
+    // If user has currentState, use it
+    if (user.currentState) {
+      console.log(`User ${user.name} has currentState:`, user.currentState);
+      return user.currentState;
+    }
+    
     // Check if user has old IN/OUT entries and needs migration
     const hasOldEntries = user.attendanceLog?.some(entry => {
       const entryType = (entry as { type: string }).type;
@@ -70,6 +76,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
     
     if (hasOldEntries) {
       // For users with old data, assume they're not working
+      console.log(`User ${user.name} has old entries, assuming not working`);
       return {
         isWorking: false,
         isOnBreak: false,
@@ -77,7 +84,10 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       };
     }
     
-    return calculateUserState(user.attendanceLog || []);
+    // Calculate state from attendance log
+    const calculatedState = calculateUserState(user.attendanceLog || []);
+    console.log(`User ${user.name} calculated state:`, calculatedState);
+    return calculatedState;
   }
 
   // Helper to determine what actions are available based on current state
@@ -161,6 +171,9 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       const currentState = getUserState(user);
       const availableActions = getAvailableActions(currentState);
       
+      console.log(`User ${user.name} - Current state:`, currentState);
+      console.log(`User ${user.name} - Available actions:`, availableActions);
+      
       
       // Determine the action to take based on current state
       let actionType: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK';
@@ -216,7 +229,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         }
       } else {
         // Auto-detect action based on current state
-        // Priority order: Stop Break > Stop Work > Start Break > Start Work
+        // Priority order: Stop Break > Start Break > Stop Work > Start Work
         if (availableActions.canStopBreak) {
           // Check if break duration is longer than 1.5 hours
           if (currentState.lastBreakStart) {
@@ -234,6 +247,9 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           
           actionType = 'STOP_BREAK';
           actionMessage = 'Stopped Break';
+        } else if (availableActions.canStartBreak) {
+          actionType = 'START_BREAK';
+          actionMessage = 'Started Break';
         } else if (availableActions.canStopWork) {
           // Check if work session is longer than 12 hours
           if (currentState.lastWorkStart) {
@@ -251,9 +267,6 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           
           actionType = 'STOP_WORK';
           actionMessage = 'Stopped Work';
-        } else if (availableActions.canStartBreak) {
-          actionType = 'START_BREAK';
-          actionMessage = 'Started Break';
         } else if (availableActions.canStartWork) {
           actionType = 'START_WORK';
           actionMessage = 'Started Work';
@@ -264,6 +277,8 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           setCode('');
           return;
         }
+        
+        console.log(`User ${user.name} - Selected action: ${actionType} (${actionMessage})`);
       }
 
       // Calculate amount earned if stopping work

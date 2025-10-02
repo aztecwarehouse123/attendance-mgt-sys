@@ -125,9 +125,12 @@ export const updateUserAttendance = async (
         updateData.amount = newAmount;
       }
       
+      // Always ensure currentState exists - calculate it if not provided or missing
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let stateToSave: any;
       if (newState !== undefined) {
-        // Filter out undefined values before saving to Firestore
-        const stateToSave: any = {
+        // Use provided state
+        stateToSave = {
           isWorking: newState.isWorking,
           isOnBreak: newState.isOnBreak,
           lastAction: newState.lastAction
@@ -142,7 +145,27 @@ export const updateUserAttendance = async (
         if (newState.lastActionTime) {
           stateToSave.lastActionTime = Timestamp.fromDate(newState.lastActionTime);
         }
+      } else if (!userData.currentState) {
+        // Auto-migrate: Calculate currentState from attendance log if it doesn't exist
+        const calculatedState = calculateUserState(updatedLog);
+        stateToSave = {
+          isWorking: calculatedState.isWorking,
+          isOnBreak: calculatedState.isOnBreak,
+          lastAction: calculatedState.lastAction
+        };
         
+        if (calculatedState.lastWorkStart) {
+          stateToSave.lastWorkStart = Timestamp.fromDate(calculatedState.lastWorkStart);
+        }
+        if (calculatedState.lastBreakStart) {
+          stateToSave.lastBreakStart = Timestamp.fromDate(calculatedState.lastBreakStart);
+        }
+        if (calculatedState.lastActionTime) {
+          stateToSave.lastActionTime = Timestamp.fromDate(calculatedState.lastActionTime);
+        }
+      }
+      
+      if (stateToSave) {
         updateData.currentState = stateToSave;
       }
       
