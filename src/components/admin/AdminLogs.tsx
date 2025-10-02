@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Download, RotateCw, Clock, LogIn, LogOut } from 'lucide-react';
-import { getAttendanceRecords, getAllUsers } from '../../services/firestore';
+import { Search, Download, RotateCw, Clock, LogIn, LogOut, Edit, Trash2 } from 'lucide-react';
+import { getAllUsers, updateAttendanceEntry, deleteAttendanceEntry } from '../../services/firestore';
 import { AttendanceRecord, User } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
@@ -38,6 +38,12 @@ const AdminLogs: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [editingLog, setEditingLog] = useState<LogEntry | null>(null);
+  const [editForm, setEditForm] = useState({
+    date: '',
+    time: '',
+    type: 'START_WORK' as 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK'
+  });
   const { isDarkMode } = useTheme();
 
   // Filters
@@ -76,54 +82,58 @@ const AdminLogs: React.FC = () => {
   const loadData = useCallback(async () => {
     try {
       setIsRefreshing(true);
-      const [attendanceRecords, allUsers] = await Promise.all([
-        getAttendanceRecords(),
-        getAllUsers()
-      ]);
+      const allUsers = await getAllUsers();
 
       // Filter out admin user
       const filteredUsers = allUsers.filter(user => user.id !== 'admin');
       setUsers(filteredUsers);
 
-      // Create a user lookup map
-      const userMap = new Map(filteredUsers.map(user => [user.id, user.name]));
+      // Collect all attendance logs from all users
+      const allLogEntries: LogEntry[] = [];
+      
+      filteredUsers.forEach(user => {
+        // Filter out old IN/OUT records, only keep new state-based actions
+        const newEntries = (user.attendanceLog || []).filter(entry => 
+          entry.type === 'START_WORK' || 
+          entry.type === 'STOP_WORK' || 
+          entry.type === 'START_BREAK' || 
+          entry.type === 'STOP_BREAK'
+        );
 
-      // Filter out old IN/OUT records, only keep new state-based actions
-      const newRecords = attendanceRecords.filter(record => 
-        record.type === 'START_WORK' || 
-        record.type === 'STOP_WORK' || 
-        record.type === 'START_BREAK' || 
-        record.type === 'STOP_BREAK'
-      );
-
-      // Transform attendance records to log entries
-      const logEntries: LogEntry[] = newRecords.map(record => {
-        const userName = userMap.get(record.userId) || 'Unknown User';
-        const date = new Date(record.timestamp);
-        const actionLabel = getActionLabel(record.type);
-        
-        return {
-          ...record,
-          userName,
-          actionLabel,
-          formattedTime: date.toLocaleTimeString('en-US', { 
-            hour12: true, 
-            hour: '2-digit', 
-            minute: '2-digit',
-            second: '2-digit'
-          }),
-          formattedDate: date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          })
-        };
+        // Transform attendance entries to log entries
+        newEntries.forEach(entry => {
+          const date = new Date(entry.timestamp);
+          const actionLabel = getActionLabel(entry.type);
+          
+          allLogEntries.push({
+            id: `${user.id}_${entry.timestamp.getTime()}`, // Generate unique ID
+            userId: user.id,
+            name: user.name,
+            timestamp: entry.timestamp,
+            type: entry.type,
+            hourlyRate: user.hourlyRate,
+            date: date.toISOString().split('T')[0], // Add required date field
+            userName: user.name,
+            actionLabel,
+            formattedTime: date.toLocaleTimeString('en-US', { 
+              hour12: true, 
+              hour: '2-digit', 
+              minute: '2-digit',
+              second: '2-digit'
+            }),
+            formattedDate: date.toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            })
+          });
+        });
       });
 
       // Sort by timestamp descending (most recent first)
-      logEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      allLogEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      setLogs(logEntries);
+      setLogs(allLogEntries);
     } catch (error) {
       console.error('Error loading logs:', error);
     } finally {
@@ -242,6 +252,83 @@ const AdminLogs: React.FC = () => {
 
     // Save the PDF
     doc.save(`attendance_logs_${startDate}_to_${endDate}.pdf`);
+  };
+
+  // Edit and delete functions with Firebase integration
+  const handleEditLog = (log: LogEntry) => {
+    setEditingLog(log);
+    // Parse the log ID to get timestamp
+    const [, timestampStr] = (log.id || '').split('_');
+    const entryDate = new Date(parseInt(timestampStr));
+    
+    setEditForm({
+      date: entryDate.toISOString().split('T')[0],
+      time: entryDate.toTimeString().split(' ')[0].substring(0, 5),
+      type: log.type
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingLog || !editingLog.id) return;
+    
+    try {
+      const [userId, timestampStr] = editingLog.id.split('_');
+      const entryIndex = findEntryIndex(userId, parseInt(timestampStr));
+      
+      if (entryIndex === -1) {
+        alert('Error: Could not find entry to update');
+        return;
+      }
+      
+      const newTimestamp = new Date(`${editForm.date}T${editForm.time}:00`);
+      
+      await updateAttendanceEntry(userId, entryIndex, {
+        timestamp: newTimestamp,
+        type: editForm.type
+      });
+      
+      // Refresh the data
+      await loadData();
+      setEditingLog(null);
+      alert('Attendance entry updated successfully!');
+    } catch (error) {
+      console.error('Error updating attendance entry:', error);
+      alert('Error updating attendance entry');
+    }
+  };
+
+  const findEntryIndex = (userId: string, timestamp: number): number => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return -1;
+    
+    return user.attendanceLog.findIndex(entry => 
+      entry.timestamp.getTime() === timestamp
+    );
+  };
+
+  const handleDeleteLog = async (logId: string | undefined) => {
+    if (!logId) return;
+    
+    if (window.confirm('Are you sure you want to delete this attendance entry? This action cannot be undone.')) {
+      try {
+        const [userId, timestampStr] = logId.split('_');
+        const entryIndex = findEntryIndex(userId, parseInt(timestampStr));
+        
+        if (entryIndex === -1) {
+          alert('Error: Could not find entry to delete');
+          return;
+        }
+        
+        await deleteAttendanceEntry(userId, entryIndex);
+        
+        // Refresh the data
+        await loadData();
+        alert('Attendance entry deleted successfully!');
+      } catch (error) {
+        console.error('Error deleting attendance entry:', error);
+        alert('Error deleting attendance entry');
+      }
+    }
   };
 
   const handleManualRefresh = () => {
@@ -430,6 +517,11 @@ const AdminLogs: React.FC = () => {
                 }`}>
                   Action
                 </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                  isDarkMode ? 'text-slate-300' : 'text-slate-500'
+                }`}>
+                  Operations
+                </th>
               </tr>
             </thead>
             <tbody className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} divide-y divide-slate-200`}>
@@ -482,6 +574,32 @@ const AdminLogs: React.FC = () => {
                     }`}>
                       {log.actionLabel}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleEditLog(log)}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          isDarkMode 
+                            ? 'text-blue-400 hover:bg-blue-900/20 hover:text-blue-300' 
+                            : 'text-blue-600 hover:bg-blue-100 hover:text-blue-700'
+                        }`}
+                        title="Edit entry"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteLog(log.id)}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          isDarkMode 
+                            ? 'text-red-400 hover:bg-red-900/20 hover:text-red-300' 
+                            : 'text-red-600 hover:bg-red-100 hover:text-red-700'
+                        }`}
+                        title="Delete entry"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </motion.tr>
               ))}
@@ -545,6 +663,99 @@ const AdminLogs: React.FC = () => {
           </div>
         )}
       </motion.div>
+
+      {/* Edit Modal */}
+      {editingLog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} rounded-lg p-6 w-full max-w-md mx-4`}>
+            <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+              Edit Attendance Entry
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>
+                  User
+                </label>
+                <div className={`px-3 py-2 rounded-md ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-gray-100 text-gray-900'}`}>
+                  {editingLog.userName}
+                </div>
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={editForm.date}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, date: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    isDarkMode 
+                      ? 'bg-slate-700 border-slate-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={editForm.time}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, time: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    isDarkMode 
+                      ? 'bg-slate-700 border-slate-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>
+                  Action Type
+                </label>
+                <select
+                  value={editForm.type}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, type: e.target.value as 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK' }))}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    isDarkMode 
+                      ? 'bg-slate-700 border-slate-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                >
+                  <option value="START_WORK">Start Work</option>
+                  <option value="STOP_WORK">Stop Work</option>
+                  <option value="START_BREAK">Start Break</option>
+                  <option value="STOP_BREAK">Stop Break</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setEditingLog(null)}
+                className={`px-4 py-2 rounded-md border ${
+                  isDarkMode 
+                    ? 'border-slate-600 text-slate-300 hover:bg-slate-700' 
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

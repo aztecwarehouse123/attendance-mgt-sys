@@ -208,7 +208,7 @@ const AdminMain: React.FC = () => {
         Name: user.name,
         'Secret Code': user.secretCode,
         'Hourly Rate': user.hourlyRate || 0,
-        'Total Amount': (workOnlyHours * user.hourlyRate).toFixed(2),
+        'Total Amount': Math.max(0, workOnlyHours * user.hourlyRate).toFixed(2),
         'Total Amount (Including Breaks)': (workHours * user.hourlyRate).toFixed(2),
         'Work Hours (Excluding Breaks)': workOnlyHours.toFixed(2),
         'Total Hours (Including Breaks)': workHours.toFixed(2),
@@ -235,7 +235,7 @@ const AdminMain: React.FC = () => {
           user.name,
           user.secretCode,
           user.hourlyRate || 0,
-          (workOnlyHours * user.hourlyRate).toFixed(2),
+          Math.max(0, workOnlyHours * user.hourlyRate).toFixed(2),
           (workHours * user.hourlyRate).toFixed(2),
           workOnlyHours.toFixed(2),
           workHours.toFixed(2),
@@ -273,7 +273,7 @@ const AdminMain: React.FC = () => {
         user.name,
         user.secretCode,
         `£${user.hourlyRate || 0}/hr`,
-        `£${(workOnlyHours * user.hourlyRate).toFixed(2)}`,
+        `£${Math.max(0, workOnlyHours * user.hourlyRate).toFixed(2)}`,
         `£${(workHours * user.hourlyRate).toFixed(2)}`,
         `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`
       ];
@@ -575,7 +575,9 @@ const AdminMain: React.FC = () => {
                         const workHours = calculateHoursForRange(user.attendanceLog || []);
                         const breaks = calculateBreaksForRange(user.attendanceLog || []);
                         const workOnlyHours = workHours - breaks.totalHours;
-                        return `£${(workOnlyHours * user.hourlyRate).toFixed(2)}`;
+                        const earnings = workOnlyHours * user.hourlyRate;
+                        // Show 0 instead of negative values until earnings become positive
+                        return `£${Math.max(0, earnings).toFixed(2)}`;
                       })()}
                     </div>
                   </td>

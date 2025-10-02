@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Key, Clock, CheckCircle, Moon, Sun, Calendar, Search } from 'lucide-react';
-import { getUserBySecretCode, updateUserAttendance, createAttendanceRecord, calculateUserState } from '../services/firestore';
-import { formatDate, formatTime } from '../utils/timeCalculations';
+import { getUserBySecretCode, updateUserAttendance, calculateUserState } from '../services/firestore';
+import { formatTime } from '../utils/timeCalculations';
 import { useTheme } from '../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { doc, getDoc } from 'firebase/firestore';
@@ -347,16 +347,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         return;
       }
 
-      // Create attendance record
-      await createAttendanceRecord({
-        userId: user.id,
-        name: user.name,
-        timestamp: now,
-        type: actionType,
-        hourlyRate: user.hourlyRate,
-        ...(actionType === 'STOP_WORK' && { amountEarned }),
-        date: formatDate(now)
-      });
+      // Note: Attendance data is now stored only in users.attendanceLog
 
       setMessage(`${user.name} - ${actionMessage} at ${formatTime(now)}`);
       setMessageType('success');
@@ -404,14 +395,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       pendingUser.id,
       { timestamp: now, type: 'START_WORK' }
     );
-    await createAttendanceRecord({
-      userId: pendingUser.id,
-      name: pendingUser.name,
-      timestamp: now,
-      type: 'START_WORK',
-      hourlyRate: pendingUser.hourlyRate,
-      date: formatDate(now)
-    });
+    // Note: Attendance data is now stored only in users.attendanceLog
     setMessage(`${pendingUser.name} - Started Work at ${formatTime(now)}`);
     setMessageType('success');
     setCode('');
@@ -497,15 +481,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           newState
         );
         
-        await createAttendanceRecord({
-          userId: pendingWorkUser.id,
-          name: pendingWorkUser.name,
-          timestamp: workStopDate,
-          type: 'STOP_WORK',
-          hourlyRate: pendingWorkUser.hourlyRate,
-          amountEarned,
-          date: formatDate(workStopDate)
-        });
+        // Note: Attendance data is now stored only in users.attendanceLog
         
         setMessage(`${pendingWorkUser.name} - Work stopped at ${formatTime(workStopDate)}`);
         setMessageType('success');
@@ -554,14 +530,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         { timestamp: breakStopDate, type: 'STOP_BREAK' }
       );
       
-      await createAttendanceRecord({
-        userId: pendingBreakUser.id,
-        name: pendingBreakUser.name,
-        timestamp: breakStopDate,
-        type: 'STOP_BREAK',
-        hourlyRate: pendingBreakUser.hourlyRate,
-        date: formatDate(breakStopDate)
-      });
+      // Note: Attendance data is now stored only in users.attendanceLog
       
       // Now add STOP_WORK entry for current time
       const now = new Date();
@@ -627,15 +596,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           newState
         );
         
-        await createAttendanceRecord({
-          userId: pendingBreakUser.id,
-          name: pendingBreakUser.name,
-          timestamp: now,
-          type: 'STOP_WORK',
-          hourlyRate: pendingBreakUser.hourlyRate,
-          amountEarned,
-          date: formatDate(now)
-        });
+        // Note: Attendance data is now stored only in users.attendanceLog
         
         setMessage(`${pendingBreakUser.name} - Break stopped at ${formatTime(breakStopDate)}, Work stopped at ${formatTime(now)}`);
         setMessageType('success');

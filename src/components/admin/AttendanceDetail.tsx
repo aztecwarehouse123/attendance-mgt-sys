@@ -43,8 +43,20 @@ const AttendanceDetail: React.FC = () => {
   // Set default startDate to first day of current month, endDate to today
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const [startDate, setStartDate] = useState<string>(firstDayOfMonth.toISOString().slice(0, 10));
-  const [endDate, setEndDate] = useState<string>(today.toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState<string>(() => {
+    // Ensure we get the correct first day of month in YYYY-MM-DD format
+    const year = firstDayOfMonth.getFullYear();
+    const month = String(firstDayOfMonth.getMonth() + 1).padStart(2, '0');
+    const day = String(firstDayOfMonth.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    // Ensure we get today's date in YYYY-MM-DD format
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
   const { isDarkMode } = useTheme();
 
   const fetchUsers = async () => {

@@ -382,3 +382,59 @@ export const updateHolidayRequestStatus = async (
     throw error;
   }
 };
+
+// Functions for editing and deleting attendance entries
+export const updateAttendanceEntry = async (
+  userId: string,
+  entryIndex: number,
+  newEntry: AttendanceEntry
+): Promise<void> => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const attendanceLog = userData.attendanceLog || [];
+      
+      // Update the specific entry
+      const updatedLog = [...attendanceLog];
+      updatedLog[entryIndex] = {
+        timestamp: Timestamp.fromDate(newEntry.timestamp),
+        type: newEntry.type
+      };
+      
+      await updateDoc(userRef, {
+        attendanceLog: updatedLog
+      });
+    }
+  } catch (error) {
+    console.error('Error updating attendance entry:', error);
+    throw error;
+  }
+};
+
+export const deleteAttendanceEntry = async (
+  userId: string,
+  entryIndex: number
+): Promise<void> => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const attendanceLog = userData.attendanceLog || [];
+      
+      // Remove the specific entry
+      const updatedLog = attendanceLog.filter((_: AttendanceEntry, index: number) => index !== entryIndex);
+      
+      await updateDoc(userRef, {
+        attendanceLog: updatedLog
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting attendance entry:', error);
+    throw error;
+  }
+};
