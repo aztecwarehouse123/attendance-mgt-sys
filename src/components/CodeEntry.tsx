@@ -229,7 +229,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         }
       } else {
         // Auto-detect action based on current state
-        // Priority order: Stop Break > Start Break > Stop Work > Start Work
+        // Priority order: Stop Break > Stop Work > Start Break > Start Work
         if (availableActions.canStopBreak) {
           // Check if break duration is longer than 1.5 hours
           if (currentState.lastBreakStart) {
@@ -247,9 +247,6 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           
           actionType = 'STOP_BREAK';
           actionMessage = 'Stopped Break';
-        } else if (availableActions.canStartBreak) {
-          actionType = 'START_BREAK';
-          actionMessage = 'Started Break';
         } else if (availableActions.canStopWork) {
           // Check if work session is longer than 12 hours
           if (currentState.lastWorkStart) {
@@ -267,6 +264,9 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           
           actionType = 'STOP_WORK';
           actionMessage = 'Stopped Work';
+        } else if (availableActions.canStartBreak) {
+          actionType = 'START_BREAK';
+          actionMessage = 'Started Break';
         } else if (availableActions.canStartWork) {
           actionType = 'START_WORK';
           actionMessage = 'Started Work';
@@ -291,15 +291,43 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         newTotalAmount = user.amount + amountEarned;
       }
 
-      // Calculate new state
+      // Calculate new state based on action type
+      let isWorking = false;
+      let isOnBreak = false;
+      
+      switch (actionType) {
+        case 'START_WORK':
+          isWorking = true;
+          isOnBreak = false;
+          break;
+        case 'START_BREAK':
+          isWorking = false;
+          isOnBreak = true;
+          break;
+        case 'STOP_BREAK':
+          isWorking = true;
+          isOnBreak = false;
+          break;
+        case 'STOP_WORK':
+          isWorking = false;
+          isOnBreak = false;
+          break;
+      }
+      
       const newState: UserState = {
-        isWorking: actionType === 'START_WORK' || (actionType === 'STOP_BREAK' && currentState.isWorking),
-        isOnBreak: actionType === 'START_BREAK' || (actionType === 'STOP_BREAK' && currentState.isOnBreak),
+        isWorking,
+        isOnBreak,
         lastWorkStart: actionType === 'START_WORK' ? now : currentState.lastWorkStart,
         lastBreakStart: actionType === 'START_BREAK' ? now : currentState.lastBreakStart,
         lastAction: actionType,
         lastActionTime: now
       };
+      
+      console.log(`User ${user.name} - State transition:`, {
+        from: { isWorking: currentState.isWorking, isOnBreak: currentState.isOnBreak },
+        action: actionType,
+        to: { isWorking: newState.isWorking, isOnBreak: newState.isOnBreak }
+      });
 
       // Update user attendance
       await updateUserAttendance(
