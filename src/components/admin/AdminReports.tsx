@@ -1,58 +1,99 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getAllUsers } from '../../services/firestore';
-import { User } from '../../types';
+import { User, AttendanceEntry } from '../../types';
 import { format } from 'date-fns';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
-// import { calculateTotalHoursThisMonth } from '../../utils/timeCalculations';
+import { calculateBreaksWithCount } from '../../utils/timeCalculations';
 
-type DailyData = { date: string; punches: number; amount: number; hours: number; entries?: unknown[] };
+type DailyData = { 
+  date: string; 
+  actions: number; 
+  amount: number; 
+  hours: number; 
+  breakHours: number;
+  breakCount: number;
+  entries?: unknown[] 
+};
 
-function calculateTotalHoursForDay(log: { timestamp: string | Date, type: string }[]): number {
-  let total = 0;
+// Calculate work hours for a day using new state-based system (breaks are paid)
+function calculateTotalHoursForDay(log: AttendanceEntry[]): number {
+  let totalWorkMinutes = 0;
+  let workStartTime: Date | null = null;
+  
   const sorted = [...log].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  for (let i = 0; i < sorted.length - 1; i += 2) {
-    if (sorted[i].type === "IN" && sorted[i + 1].type === "OUT") {
-      const inTime = new Date(sorted[i].timestamp).getTime();
-      const outTime = new Date(sorted[i + 1].timestamp).getTime();
-      total += (outTime - inTime) / (1000 * 60 * 60);
+  
+  for (const entry of sorted) {
+    switch (entry.type) {
+      case 'START_WORK':
+        workStartTime = new Date(entry.timestamp);
+        break;
+      case 'START_BREAK':
+        // Breaks are paid - don't stop counting
+        break;
+      case 'STOP_BREAK':
+        // Breaks are paid - continue counting
+        break;
+      case 'STOP_WORK':
+        if (workStartTime) {
+          // Use same calculation as AdminMain for consistency
+          totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
+          workStartTime = null;
+        }
+        break;
     }
   }
-  return total;
+  
+  return totalWorkMinutes / 60;
 }
 
-// Calculate hours for a specific date range (similar to main page logic)
-function calculateHoursForRange(attendanceLog: { timestamp: string | Date, type: string }[], startDate: Date, endDate: Date): number {
+// Calculate hours for a specific date range (breaks are paid)
+function calculateHoursForRange(attendanceLog: AttendanceEntry[], startDate: Date, endDate: Date): number {
   const filteredEntries = attendanceLog.filter(entry => {
     const entryDate = new Date(entry.timestamp);
     return entryDate >= startDate && entryDate <= endDate;
   });
 
-  let totalHours = 0;
-  const dailyEntries = new Map<string, typeof attendanceLog>();
+  const sorted = [...filteredEntries].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
   
-  filteredEntries.forEach(entry => {
-    const dateKey = new Date(entry.timestamp).toISOString().split('T')[0];
-    if (!dailyEntries.has(dateKey)) {
-      dailyEntries.set(dateKey, []);
+  let totalWorkMinutes = 0;
+  let workStartTime: Date | null = null;
+  
+  for (const entry of sorted) {
+    switch (entry.type) {
+      case 'START_WORK':
+        workStartTime = new Date(entry.timestamp);
+        break;
+      case 'START_BREAK':
+        // Breaks are paid - don't stop counting
+        break;
+      case 'STOP_BREAK':
+        // Breaks are paid - continue counting
+        break;
+      case 'STOP_WORK':
+        if (workStartTime) {
+          // Use same calculation as AdminMain for consistency
+          totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
+          workStartTime = null;
+        }
+        break;
     }
-    dailyEntries.get(dateKey)!.push(entry);
-  });
+  }
   
-  dailyEntries.forEach(entries => {
-    for (let i = 0; i < entries.length; i += 2) {
-      const inEntry = entries[i];
-      const outEntry = entries[i + 1];
-      
-      if (inEntry && outEntry && inEntry.type === 'IN' && outEntry.type === 'OUT') {
-        const minutesWorked = (new Date(outEntry.timestamp).getTime() - new Date(inEntry.timestamp).getTime()) / (1000 * 60);
-        totalHours += minutesWorked / 60;
-      }
-    }
+  return totalWorkMinutes / 60;
+}
+
+// Calculate breaks for a specific date range
+function calculateBreaksForRange(attendanceLog: AttendanceEntry[], startDate: Date, endDate: Date): { totalHours: number; count: number } {
+  const filteredEntries = attendanceLog.filter(entry => {
+    const entryDate = new Date(entry.timestamp);
+    return entryDate >= startDate && entryDate <= endDate;
   });
-  
-  return totalHours;
+
+  return calculateBreaksWithCount(filteredEntries);
 }
 
 function getDateRangeArray(start: Date, end: Date): string[] {
@@ -127,12 +168,29 @@ const AdminReports: React.FC = () => {
         logByDay[dateKey].push(entry);
       });
       Object.entries(logByDay).forEach(([dateKey, log]) => {
-        const punches = Math.floor(log.length / 2);
-        const hours = calculateTotalHoursForDay(log);
-        if (!dailyData[dateKey]) dailyData[dateKey] = { date: dateKey, punches: 0, amount: 0, hours: 0 };
-        dailyData[dateKey].punches += punches;
+        // Count work sessions (each START_WORK = 1 session)
+        const workSessions = (log as AttendanceEntry[]).filter(entry => 
+          entry.type === 'START_WORK'
+        ).length;
+        
+        const hours = calculateTotalHoursForDay(log as AttendanceEntry[]);
+        const breaks = calculateBreaksWithCount(log as AttendanceEntry[]);
+        
+        if (!dailyData[dateKey]) {
+          dailyData[dateKey] = { 
+            date: dateKey, 
+            actions: 0, 
+            amount: 0, 
+            hours: 0, 
+            breakHours: 0, 
+            breakCount: 0 
+          };
+        }
+        dailyData[dateKey].actions += workSessions;  // Now counts work sessions, not all actions
         dailyData[dateKey].amount += hours * user.hourlyRate;
         dailyData[dateKey].hours += hours;
+        dailyData[dateKey].breakHours += breaks.totalHours;
+        dailyData[dateKey].breakCount += breaks.count;
       });
     });
     // Fill in missing days with zeroes
@@ -143,12 +201,13 @@ const AdminReports: React.FC = () => {
         ...item,
         date: formattedDate,
         amount: parseFloat(item.amount.toFixed(2)),
-        hours: parseFloat(item.hours.toFixed(2))
+        hours: parseFloat(item.hours.toFixed(2)),
+        breakHours: parseFloat(item.breakHours.toFixed(2))
       };
       return acc;
     }, {} as { [date: string]: DailyData });
     const filledChartData = allDates.map(date =>
-      chartDataMap[date] || { date, punches: 0, amount: 0, hours: 0 }
+      chartDataMap[date] || { date, actions: 0, amount: 0, hours: 0, breakHours: 0, breakCount: 0 }
     );
     setChartData(filledChartData);
   }, [users, selectedUser, startDate, endDate]);
@@ -167,27 +226,36 @@ const AdminReports: React.FC = () => {
     }
     const filteredUsers = users.filter(user => user.id !== 'admin' && (selectedUser === 'all' || user.id === selectedUser));
     let totalAmount = 0;
-    let totalPunches = 0;
+    let totalActions = 0;
     let totalHours = 0;
+    let totalBreakHours = 0;
+    let totalBreakCount = 0;
 
     filteredUsers.forEach(user => {
-      // Calculate hours for the selected date range using the same logic as main page
+      // Calculate hours for the selected date range (breaks are paid)
       const hours = calculateHoursForRange(user.attendanceLog || [], start, end);
       
-      // Calculate punches for the selected date range
+      // Calculate breaks for the selected date range
+      const breaks = calculateBreaksForRange(user.attendanceLog || [], start, end);
+      
+      // Count work sessions for the selected date range (each START_WORK = 1 session)
       const filteredLog = (user.attendanceLog || []).filter(entry => {
         const entryDate = new Date(entry.timestamp);
         return entryDate >= start && entryDate <= end;
       });
-      const punches = Math.floor(filteredLog.length / 2);
+      const workSessions = filteredLog.filter((entry: AttendanceEntry) => 
+        entry.type === 'START_WORK'
+      ).length;
       
-      totalPunches += punches;
+      totalActions += workSessions;  // Now counts work sessions, not all actions
       totalAmount += hours * user.hourlyRate;
       totalHours += hours;
+      totalBreakHours += breaks.totalHours;
+      totalBreakCount += breaks.count;
     });
     
     const uniqueUsers = filteredUsers.length;
-    return { totalPunches, totalAmount, totalHours, uniqueUsers };
+    return { totalActions, totalAmount, totalHours, totalBreakHours, totalBreakCount, uniqueUsers };
   };
 
   if (isLoading) {
@@ -217,7 +285,7 @@ const AdminReports: React.FC = () => {
       </motion.div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -227,12 +295,12 @@ const AdminReports: React.FC = () => {
           <div className="flex items-center">
             <div className="flex-shrink-0">
               <div className={`w-8 h-8 ${isDarkMode ? 'bg-blue-900/50' : 'bg-blue-100'} rounded-full flex items-center justify-center`}>
-                <span className={`${isDarkMode ? 'text-blue-400' : 'text-blue-600'} font-semibold`}>{stats.totalPunches}</span>
+                <span className={`${isDarkMode ? 'text-blue-400' : 'text-blue-600'} font-semibold`}>{stats.totalActions}</span>
               </div>
             </div>
             <div className="ml-4">
-              <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Punches</p>
-              <p className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{stats.totalPunches}</p>
+              <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Work Sessions</p>
+              <p className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{stats.totalActions}</p>
             </div>
           </div>
         </motion.div>
@@ -279,6 +347,25 @@ const AdminReports: React.FC = () => {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
+          className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-6 border`}
+        >
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <div className={`w-8 h-8 ${isDarkMode ? 'bg-cyan-900/50' : 'bg-cyan-100'} rounded-full flex items-center justify-center`}>
+                <span className={`${isDarkMode ? 'text-cyan-400' : 'text-cyan-600'} font-semibold`}>☕</span>
+              </div>
+            </div>
+            <div className="ml-4">
+              <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Breaks</p>
+              <p className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{stats.totalBreakCount}</p>
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
           className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-6 border`}
         >
           <div className="flex items-center">
@@ -358,9 +445,9 @@ const AdminReports: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Punches Chart */}
+            {/* Work Sessions Chart */}
             <div>
-              <h4 className={`text-md font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Daily Punches</h4>
+              <h4 className={`text-md font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Daily Work Sessions</h4>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? '#475569' : '#e2e8f0'} />
@@ -384,7 +471,8 @@ const AdminReports: React.FC = () => {
                   <Legend />
                   <Line 
                     type="monotone" 
-                    dataKey="punches" 
+                    dataKey="actions" 
+                    name="Work Sessions"
                     stroke={isDarkMode ? '#3b82f6' : '#2563eb'} 
                     strokeWidth={2}
                     dot={{ fill: isDarkMode ? '#3b82f6' : '#2563eb' }}
@@ -430,7 +518,7 @@ const AdminReports: React.FC = () => {
 
             {/* Hours Chart */}
             <div>
-              <h4 className={`text-md font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Daily Hours Worked</h4>
+              <h4 className={`text-md font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Daily Hours Worked (Including Paid Breaks)</h4>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? '#475569' : '#e2e8f0'} />
@@ -457,6 +545,7 @@ const AdminReports: React.FC = () => {
                   <Line 
                     type="monotone" 
                     dataKey="hours" 
+                    name="Total Hours"
                     stroke={isDarkMode ? '#f59e0b' : '#d97706'} 
                     strokeWidth={2}
                     dot={{ fill: isDarkMode ? '#f59e0b' : '#d97706' }}
@@ -464,6 +553,7 @@ const AdminReports: React.FC = () => {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+
           </div>
         )}
       </motion.div>

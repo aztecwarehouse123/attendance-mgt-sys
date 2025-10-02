@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, UserPlus, Edit2, Trash2, RotateCw } from 'lucide-react';
 import { getAllUsers, deleteUser, updateUser } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
-import { calculateTotalHoursThisMonth } from '../../utils/timeCalculations';
+import { calculateMonthlyHours, calculateBreaksWithCount } from '../../utils/timeCalculations';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import AddUserModal from '../AddUserModal';
@@ -110,7 +110,8 @@ const AdminMain: React.FC = () => {
       setUsers(filtered);
       // After setting users, check and update amount if needed
       filtered.forEach(async (user) => {
-        const calculatedAmount = Number((calculateTotalHoursThisMonth(user.attendanceLog || []) * user.hourlyRate).toFixed(2));
+        const now = new Date();
+        const calculatedAmount = Number((calculateMonthlyHours(user.attendanceLog || [], now.getMonth(), now.getFullYear()) * user.hourlyRate).toFixed(2));
         if (user.amount !== calculatedAmount) {
           try {
             await updateUser(user.id, { amount: calculatedAmount });
@@ -132,6 +133,7 @@ const AdminMain: React.FC = () => {
   };
 
   // Calculate hours for the selected date range
+  // Breaks are PAID, so we count total time from START_WORK to STOP_WORK
   const calculateHoursForRange = (attendanceLog: AttendanceEntry[]) => {
     const rangeStart = startDate ? new Date(startDate) : null;
     const rangeEnd = endDate ? new Date(endDate + 'T23:59:59') : null;
@@ -144,31 +146,36 @@ const AdminMain: React.FC = () => {
       return true;
     });
 
-    // Use the same calculation logic as calculateTotalHoursThisMonth but for filtered entries
-    let totalHours = 0;
-    const dailyEntries = new Map<string, AttendanceEntry[]>();
+    // Sort entries by timestamp
+    const sortedEntries = [...filteredEntries].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
     
-    filteredEntries.forEach(entry => {
-      const dateKey = new Date(entry.timestamp).toISOString().split('T')[0];
-      if (!dailyEntries.has(dateKey)) {
-        dailyEntries.set(dateKey, []);
+    let totalWorkMinutes = 0;
+    let workStartTime: Date | null = null;
+    
+    for (const entry of sortedEntries) {
+      switch (entry.type) {
+        case 'START_WORK':
+          workStartTime = new Date(entry.timestamp);
+          break;
+        case 'START_BREAK':
+          // Breaks are paid - don't stop counting work time
+          break;
+        case 'STOP_BREAK':
+          // Breaks are paid - continue work timing
+          break;
+        case 'STOP_WORK':
+          if (workStartTime) {
+            // Add total time from work start to work stop (including breaks - they're paid)
+            totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
+            workStartTime = null; // Reset work start time
+          }
+          break;
       }
-      dailyEntries.get(dateKey)!.push(entry);
-    });
+    }
     
-    dailyEntries.forEach(entries => {
-      for (let i = 0; i < entries.length; i += 2) {
-        const inEntry = entries[i];
-        const outEntry = entries[i + 1];
-        
-        if (inEntry && outEntry && inEntry.type === 'IN' && outEntry.type === 'OUT') {
-          const minutesWorked = (new Date(outEntry.timestamp).getTime() - new Date(inEntry.timestamp).getTime()) / (1000 * 60);
-          totalHours += minutesWorked / 60;
-        }
-      }
-    });
-    
-    return totalHours;
+    return totalWorkMinutes / 60;
   };
 
   // Calculate breaks for the selected date range
@@ -184,40 +191,11 @@ const AdminMain: React.FC = () => {
       return true;
     });
 
-    let totalBreakMinutes = 0;
-    let breakCount = 0;
-    const dailyEntries = new Map<string, AttendanceEntry[]>();
-    
-    // Group entries by date
-    filteredEntries.forEach(entry => {
-      const dateKey = new Date(entry.timestamp).toISOString().split('T')[0];
-      if (!dailyEntries.has(dateKey)) {
-        dailyEntries.set(dateKey, []);
-      }
-      dailyEntries.get(dateKey)!.push(entry);
-    });
-    
-    // Calculate breaks for each day
-    dailyEntries.forEach(entries => {
-      // Sort entries by timestamp
-      entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      
-      for (let i = 0; i < entries.length - 1; i++) {
-        const currentEntry = entries[i];
-        const nextEntry = entries[i + 1];
-        
-        // Break occurs when current entry is OUT and next entry is IN
-        if (currentEntry.type === 'OUT' && nextEntry.type === 'IN') {
-          const breakMinutes = (new Date(nextEntry.timestamp).getTime() - new Date(currentEntry.timestamp).getTime()) / (1000 * 60);
-          totalBreakMinutes += breakMinutes;
-          breakCount++;
-        }
-      }
-    });
-    
+    // Use the new state-based calculation logic
+    const breakData = calculateBreaksWithCount(filteredEntries);
     return {
-      totalHours: totalBreakMinutes / 60, // Convert to hours
-      count: breakCount
+      totalHours: breakData.totalHours,
+      count: breakData.count
     };
   };
 
@@ -225,16 +203,17 @@ const AdminMain: React.FC = () => {
     const data = filteredUsers.map(user => {
       const breaks = calculateBreaksForRange(user.attendanceLog || []);
       const workHours = calculateHoursForRange(user.attendanceLog || []);
-      const totalHoursWithBreaks = workHours + breaks.totalHours;
+      const workOnlyHours = workHours - breaks.totalHours;
       return {
         Name: user.name,
         'Secret Code': user.secretCode,
         'Hourly Rate': user.hourlyRate || 0,
-        'Total Amount': user.amount || 0,
-        'Total Amount (Including Breaks)': (totalHoursWithBreaks * user.hourlyRate).toFixed(2),
-        'Total Breaks (Date Range)': breaks.totalHours,
-        'Number of Breaks': breaks.count,
-        'Total Hours (Date Range)': workHours
+        'Total Amount': (workOnlyHours * user.hourlyRate).toFixed(2),
+        'Total Amount (Including Breaks)': (workHours * user.hourlyRate).toFixed(2),
+        'Work Hours (Excluding Breaks)': workOnlyHours.toFixed(2),
+        'Total Hours (Including Breaks)': workHours.toFixed(2),
+        'Break Time': `${breaks.totalHours.toFixed(2)} hours`,
+        'Number of Breaks': breaks.count
       };
     });
 
@@ -245,22 +224,23 @@ const AdminMain: React.FC = () => {
   };
 
   const exportToCSV = () => {
-    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Amount (Including Breaks)', 'Total Breaks (Date Range)', 'Number of Breaks', 'Total Hours (Date Range)'];
+    const headers = ['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Amount (Including Breaks)', 'Work Hours (Excluding Breaks)', 'Total Hours (Including Breaks)', 'Break Time', 'Number of Breaks'];
     const csvData = [
       headers.join(','),
       ...filteredUsers.map(user => {
         const breaks = calculateBreaksForRange(user.attendanceLog || []);
         const workHours = calculateHoursForRange(user.attendanceLog || []);
-        const totalHoursWithBreaks = workHours + breaks.totalHours;
+        const workOnlyHours = workHours - breaks.totalHours;
         return [
           user.name,
           user.secretCode,
           user.hourlyRate || 0,
-          user.amount || 0,
-          (totalHoursWithBreaks * user.hourlyRate).toFixed(2),
-          breaks.totalHours,
-          breaks.count,
-          workHours
+          (workOnlyHours * user.hourlyRate).toFixed(2),
+          (workHours * user.hourlyRate).toFixed(2),
+          workOnlyHours.toFixed(2),
+          workHours.toFixed(2),
+          `${breaks.totalHours.toFixed(2)} hours`,
+          breaks.count
         ].join(',');
       })
     ].join('\n');
@@ -288,22 +268,21 @@ const AdminMain: React.FC = () => {
     const tableData = filteredUsers.map(user => {
       const breaks = calculateBreaksForRange(user.attendanceLog || []);
       const workHours = calculateHoursForRange(user.attendanceLog || []);
-      const totalHoursWithBreaks = workHours + breaks.totalHours;
+      const workOnlyHours = workHours - breaks.totalHours;
       return [
         user.name,
         user.secretCode,
         `£${user.hourlyRate || 0}/hr`,
+        `£${(workOnlyHours * user.hourlyRate).toFixed(2)}`,
         `£${(workHours * user.hourlyRate).toFixed(2)}`,
-        `£${(totalHoursWithBreaks * user.hourlyRate).toFixed(2)}`,
-        `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`,
-        formatHoursAndMinutes(workHours)
+        `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`
       ];
     });
 
     // Add table using autoTable
     autoTable(doc, {
       startY: 45,
-      head: [['Name', 'Secret Code', 'Hourly Rate', 'Total Amount', 'Total Amount (Incl. Breaks)', 'Total Breaks', 'Work Hours']],
+      head: [['Name', 'Code', 'Rate', 'Amount', 'Amount (w/ Breaks)', 'Break Time']],
       body: tableData,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [59, 130, 246] },
@@ -546,7 +525,7 @@ const AdminMain: React.FC = () => {
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
                   isDarkMode ? 'text-slate-300' : 'text-slate-500'
                 }`}>
-                  Total Breaks
+                  Break Time (Info)
                 </th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
                   isDarkMode ? 'text-slate-300' : 'text-slate-500'
@@ -591,15 +570,20 @@ const AdminMain: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>£{(calculateHoursForRange(user.attendanceLog || []) * user.hourlyRate).toFixed(2)}</div>
+                    <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>
+                      {(() => {
+                        const workHours = calculateHoursForRange(user.attendanceLog || []);
+                        const breaks = calculateBreaksForRange(user.attendanceLog || []);
+                        const workOnlyHours = workHours - breaks.totalHours;
+                        return `£${(workOnlyHours * user.hourlyRate).toFixed(2)}`;
+                      })()}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className={`text-sm font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
                       {(() => {
                         const workHours = calculateHoursForRange(user.attendanceLog || []);
-                        const breaks = calculateBreaksForRange(user.attendanceLog || []);
-                        const totalHours = workHours + breaks.totalHours;
-                        return `£${(totalHours * user.hourlyRate).toFixed(2)}`;
+                        return `£${(workHours * user.hourlyRate).toFixed(2)}`;
                       })()}
                     </div>
                   </td>
@@ -607,7 +591,7 @@ const AdminMain: React.FC = () => {
                     <div className={`text-sm ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
                       {(() => {
                         const breaks = calculateBreaksForRange(user.attendanceLog || []);
-                        return `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count})`;
+                        return `${formatHoursAndMinutes(breaks.totalHours)} (${breaks.count} breaks)`;
                       })()}
                     </div>
                   </td>

@@ -5,11 +5,21 @@ export interface User {
   amount: number;
   hourlyRate: number;
   attendanceLog: AttendanceEntry[];
+  currentState?: UserState;
+}
+
+export interface UserState {
+  isWorking: boolean;
+  isOnBreak: boolean;
+  lastWorkStart?: Date;
+  lastBreakStart?: Date;
+  lastAction: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK' | null;
+  lastActionTime?: Date;
 }
 
 export interface AttendanceEntry {
   timestamp: Date;
-  type: 'IN' | 'OUT';
+  type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK';
 }
 
 export interface AttendanceRecord {
@@ -17,7 +27,7 @@ export interface AttendanceRecord {
   userId: string;
   name: string;
   timestamp: Date;
-  type: 'IN' | 'OUT';
+  type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK';
   hourlyRate: number;
   amountEarned?: number;
   date: string;

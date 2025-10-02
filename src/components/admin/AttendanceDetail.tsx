@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getAllUsers } from '../../services/firestore';
 import { User, AttendanceEntry } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
+import { calculateBreaksWithCount } from '../../utils/timeCalculations';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
@@ -26,11 +27,11 @@ declare module 'jspdf' {
   }
 }
 
-// Helper function to format hours as 'X hours Y minutes'
-function formatHoursAndMinutes(decimalHours: number): string {
+// Helper function to format hours as clock format 'HH:MM'
+function formatHoursAsClock(decimalHours: number): string {
   const hours = Math.floor(decimalHours);
   const minutes = Math.round((decimalHours - hours) * 60);
-  return `${hours} hours ${minutes} minutes`;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 const AttendanceDetail: React.FC = () => {
@@ -71,10 +72,20 @@ const AttendanceDetail: React.FC = () => {
     setIsLoading(false);
   }, [selectedUserId, users]);
 
-  // Sort attendanceLog by timestamp descending
-  const sortedAttendance: AttendanceEntry[] = selectedUser?.attendanceLog
-    ? [...selectedUser.attendanceLog].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+  // Filter out old IN/OUT entries, only show new state-based actions
+  const newStateEntries: AttendanceEntry[] = selectedUser?.attendanceLog
+    ? selectedUser.attendanceLog.filter(entry => 
+        entry.type === 'START_WORK' || 
+        entry.type === 'STOP_WORK' || 
+        entry.type === 'START_BREAK' || 
+        entry.type === 'STOP_BREAK'
+      )
     : [];
+
+  // Sort by timestamp descending
+  const sortedAttendance: AttendanceEntry[] = [...newStateEntries].sort(
+    (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+  );
 
   // Filter attendance by date range
   const filteredAttendance = sortedAttendance.filter(entry => {
@@ -85,12 +96,46 @@ const AttendanceDetail: React.FC = () => {
     return true;
   });
 
-  // Export filtered punches to Excel
+  // Calculate hours for filtered attendance (breaks are paid)
+  const calculateFilteredHours = () => {
+    if (!filteredAttendance.length) return 0;
+    
+    const sorted = [...filteredAttendance].sort((a, b) => 
+      a.timestamp.getTime() - b.timestamp.getTime()
+    );
+    
+    let totalWorkMinutes = 0;
+    let workStartTime: Date | null = null;
+    
+    for (const entry of sorted) {
+      switch (entry.type) {
+        case 'START_WORK':
+          workStartTime = new Date(entry.timestamp);
+          break;
+        case 'START_BREAK':
+          // Breaks are paid - don't stop counting
+          break;
+        case 'STOP_BREAK':
+          // Breaks are paid - continue counting
+          break;
+        case 'STOP_WORK':
+          if (workStartTime) {
+            totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
+            workStartTime = null;
+          }
+          break;
+      }
+    }
+    
+    return totalWorkMinutes / 60;
+  };
+
+  // Export filtered actions to Excel
   const exportToExcel = () => {
     const data = filteredAttendance.map(entry => ({
       Date: entry.timestamp.toLocaleDateString(),
       Time: entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      Type: entry.type
+      Action: getActionLabel(entry.type)
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -98,15 +143,26 @@ const AttendanceDetail: React.FC = () => {
     XLSX.writeFile(wb, `attendance_detail_${selectedUser?.name || 'user'}.xlsx`);
   };
 
-  // Export filtered punches to CSV
+  // Get human-readable action label
+  const getActionLabel = (type: string): string => {
+    switch (type) {
+      case 'START_WORK': return 'Started Work';
+      case 'STOP_WORK': return 'Stopped Work';
+      case 'START_BREAK': return 'Started Break';
+      case 'STOP_BREAK': return 'Stopped Break';
+      default: return type;
+    }
+  };
+
+  // Export filtered actions to CSV
   const exportToCSV = () => {
-    const headers = ['Date', 'Time', 'Type'];
+    const headers = ['Date', 'Time', 'Action'];
     const csvData = [
       headers.join(','),
       ...filteredAttendance.map(entry => [
         entry.timestamp.toISOString().slice(0, 10),
         entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        entry.type
+        `"${getActionLabel(entry.type)}"`
       ].join(','))
     ].join('\n');
     const blob = new Blob([csvData], { type: 'text/csv' });
@@ -118,30 +174,37 @@ const AttendanceDetail: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  // Export filtered punches to PDF
+  // Export filtered actions to PDF
   const exportToPDF = () => {
     const doc = new jsPDF();
+    const totalHours = calculateFilteredHours();
+    const breaks = calculateBreaksWithCount(filteredAttendance);
     
     // Add title
     doc.setFontSize(16);
     doc.text('Attendance Details', 14, 22);
     doc.setFontSize(10);
     doc.text(`User: ${selectedUser?.name || 'Unknown'}`, 14, 30);
-    doc.text(`Date Range: ${startDate} to ${endDate}`, 14, 36);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 42);
-    doc.text(`Total Records: ${filteredAttendance.length}`, 14, 48);
+    doc.text(`Hourly Rate: \u00a3${selectedUser?.hourlyRate || 0}/hr`, 14, 36);
+    doc.text(`Date Range: ${startDate} to ${endDate}`, 14, 42);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 48);
+    const startWork = filteredAttendance.filter(entry => entry.type === 'START_WORK').length;
+    const startBreaks = filteredAttendance.filter(entry => entry.type === 'START_BREAK').length;
+    doc.text(`Work Sessions: ${startWork}  |  Breaks: ${startBreaks}`, 14, 54);
+    doc.text(`Total Hours: ${formatHoursAsClock(totalHours)}  |  Break Time: ${formatHoursAsClock(breaks.totalHours)}`, 14, 60);
+    doc.text(`Total Amount: \u00a3${(totalHours * (selectedUser?.hourlyRate || 0)).toFixed(2)}`, 14, 66);
     
     // Prepare data for table
     const tableData = filteredAttendance.map(entry => [
       entry.timestamp.toLocaleDateString(),
       entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      entry.type
+      getActionLabel(entry.type)
     ]);
 
     // Add table using autoTable
     autoTable(doc, {
-      startY: 55,
-      head: [['Date', 'Time', 'Type']],
+      startY: 75,
+      head: [['Date', 'Time', 'Action']],
       body: tableData,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [59, 130, 246] },
@@ -170,7 +233,7 @@ const AttendanceDetail: React.FC = () => {
             Attendance Details
           </h2>
           <p className={`${isDarkMode ? 'text-slate-300' : 'text-slate-600'} mb-4`}>
-            View and export detailed attendance punches for each user.
+            View and export detailed attendance actions for each user.
           </p>
           <div className="flex justify-end mb-4">
             <div className="flex space-x-2 items-center">
@@ -249,51 +312,93 @@ const AttendanceDetail: React.FC = () => {
                 <div><b>Hourly Rate:</b> £{selectedUser.hourlyRate}</div>
                 <div>
                   <b>Total Amount:</b> £{(() => {
-                    let total = 0;
-                    // Sort and group by day
-                    const logByDay: { [key: string]: typeof filteredAttendance } = {};
-                    filteredAttendance.forEach(entry => {
-                      const dateKey = format(entry.timestamp, 'yyyy-MM-dd');
-                      if (!logByDay[dateKey]) logByDay[dateKey] = [];
-                      logByDay[dateKey].push(entry);
-                    });
-                    Object.values(logByDay).forEach(log => {
-                      // Calculate hours for each day
-                      let hours = 0;
-                      const sorted = [...log].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-                      for (let i = 0; i < sorted.length - 1; i += 2) {
-                        if (sorted[i].type === 'IN' && sorted[i + 1].type === 'OUT') {
-                          hours += (sorted[i + 1].timestamp.getTime() - sorted[i].timestamp.getTime()) / (1000 * 60 * 60);
-                        }
-                      }
-                      total += hours * (selectedUser?.hourlyRate || 0);
-                    });
-                    return total.toFixed(2);
+                    const totalHours = calculateFilteredHours();
+                    return (totalHours * (selectedUser?.hourlyRate || 0)).toFixed(2);
                   })()}
                 </div>
                 <div>
-                  <b>Total Punches:</b> {Math.floor(filteredAttendance.length / 2)}
+                  <b>Work Sessions:</b> {(() => {
+                    const startWork = filteredAttendance.filter(entry => entry.type === 'START_WORK').length;
+                    const stopWork = filteredAttendance.filter(entry => entry.type === 'STOP_WORK').length;
+                    const incomplete = startWork - stopWork;
+                    return `${startWork} ${startWork === 1 ? 'session' : 'sessions'}${incomplete > 0 ? ` (${incomplete} incomplete)` : ''}`;
+                  })()}
                 </div>
                 <div>
-                  <b>Total Hours:</b> {(() => {
-                    let totalHours = 0;
-                    // Sort and group by day
-                    const logByDay: { [key: string]: typeof filteredAttendance } = {};
-                    filteredAttendance.forEach(entry => {
-                      const dateKey = format(entry.timestamp, 'yyyy-MM-dd');
-                      if (!logByDay[dateKey]) logByDay[dateKey] = [];
-                      logByDay[dateKey].push(entry);
-                    });
-                    Object.values(logByDay).forEach(log => {
-                      // Calculate hours for each day
-                      const sorted = [...log].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-                      for (let i = 0; i < sorted.length - 1; i += 2) {
-                        if (sorted[i].type === 'IN' && sorted[i + 1].type === 'OUT') {
-                          totalHours += (sorted[i + 1].timestamp.getTime() - sorted[i].timestamp.getTime()) / (1000 * 60 * 60);
-                        }
+                  <b>Breaks:</b> {(() => {
+                    const startBreaks = filteredAttendance.filter(entry => entry.type === 'START_BREAK').length;
+                    const stopBreaks = filteredAttendance.filter(entry => entry.type === 'STOP_BREAK').length;
+                    const incomplete = startBreaks - stopBreaks;
+                    return `${startBreaks} ${startBreaks === 1 ? 'break' : 'breaks'}${incomplete > 0 ? ` (${incomplete} incomplete)` : ''}`;
+                  })()}
+                </div>
+                <div>
+                  <b>Total Hours:</b> {formatHoursAsClock(calculateFilteredHours())}
+                </div>
+                <div>
+                  <b>Break Time:</b> {(() => {
+                    const breaks = calculateBreaksWithCount(filteredAttendance);
+                    return formatHoursAsClock(breaks.totalHours);
+                  })()}
+                </div>
+                <div>
+                  <b>Avg. Working Hours:</b> {(() => {
+                    const startWork = filteredAttendance.filter(entry => entry.type === 'START_WORK').length;
+                    if (startWork === 0) return '00:00';
+                    
+                    const totalHours = calculateFilteredHours();
+                    const avgHours = totalHours / startWork;
+                    return `${formatHoursAsClock(avgHours)} per session`;
+                  })()}
+                </div>
+                <div>
+                  <b>Max Working Hours:</b> {(() => {
+                    // Calculate hours for each work session
+                    const sorted = [...filteredAttendance].sort((a, b) => 
+                      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                    );
+                    
+                    const sessionHours: number[] = [];
+                    let workStart: Date | null = null;
+                    
+                    for (const entry of sorted) {
+                      if (entry.type === 'START_WORK') {
+                        workStart = new Date(entry.timestamp);
+                      } else if (entry.type === 'STOP_WORK' && workStart) {
+                        const hours = (new Date(entry.timestamp).getTime() - workStart.getTime()) / (1000 * 60 * 60);
+                        sessionHours.push(hours);
+                        workStart = null;
                       }
-                    });
-                    return formatHoursAndMinutes(totalHours);
+                    }
+                    
+                    if (sessionHours.length === 0) return '00:00';
+                    const maxHours = Math.max(...sessionHours);
+                    return formatHoursAsClock(maxHours);
+                  })()}
+                </div>
+                <div>
+                  <b>Min Working Hours:</b> {(() => {
+                    // Calculate hours for each work session
+                    const sorted = [...filteredAttendance].sort((a, b) => 
+                      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                    );
+                    
+                    const sessionHours: number[] = [];
+                    let workStart: Date | null = null;
+                    
+                    for (const entry of sorted) {
+                      if (entry.type === 'START_WORK') {
+                        workStart = new Date(entry.timestamp);
+                      } else if (entry.type === 'STOP_WORK' && workStart) {
+                        const hours = (new Date(entry.timestamp).getTime() - workStart.getTime()) / (1000 * 60 * 60);
+                        sessionHours.push(hours);
+                        workStart = null;
+                      }
+                    }
+                    
+                    if (sessionHours.length === 0) return '00:00';
+                    const minHours = Math.min(...sessionHours);
+                    return formatHoursAsClock(minHours);
                   })()}
                 </div>
               </div>
@@ -305,19 +410,35 @@ const AttendanceDetail: React.FC = () => {
                 <tr>
                   <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Date</th>
                   <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Time</th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Type</th>
+                  <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Action</th>
                 </tr>
               </thead>
               <tbody className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} divide-y divide-slate-200`}>
                 {isLoading ? (
                   <tr><td colSpan={3} className="text-center py-8 text-white">Loading...</td></tr>
                 ) : filteredAttendance.length === 0 ? (
-                  <tr><td colSpan={3} className="text-center py-8 text-white">No attendance punches found.</td></tr>
+                  <tr><td colSpan={3} className={`text-center py-8 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>No attendance actions found.</td></tr>
                 ) : filteredAttendance.map((entry, idx) => (
                   <tr key={idx} className={`${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50'} transition-colors`}>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{entry.timestamp.toLocaleDateString()}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{entry.type}</td>
+                    <td className={`px-6 py-4 whitespace-nowrap`}>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        entry.type === 'START_WORK' || entry.type === 'STOP_WORK'
+                          ? isDarkMode 
+                            ? 'bg-green-900/30 text-green-400 border border-green-800/50'
+                            : 'bg-green-100 text-green-800 border border-green-200'
+                          : entry.type === 'START_BREAK' || entry.type === 'STOP_BREAK'
+                            ? isDarkMode
+                              ? 'bg-orange-900/30 text-orange-400 border border-orange-800/50'
+                              : 'bg-orange-100 text-orange-800 border border-orange-200'
+                            : isDarkMode
+                              ? 'bg-gray-700 text-gray-300'
+                              : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {getActionLabel(entry.type)}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

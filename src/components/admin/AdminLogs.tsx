@@ -55,34 +55,21 @@ const AdminLogs: React.FC = () => {
            String(today.getMonth() + 1).padStart(2, '0') + '-' + 
            String(today.getDate()).padStart(2, '0');
   });
-  const [logType, setLogType] = useState<string>('all'); // 'all', 'IN', 'OUT'
+  const [logType, setLogType] = useState<string>('all'); // 'all', 'START_WORK', 'START_BREAK', 'STOP_BREAK', 'STOP_WORK'
 
-  // Function to determine action label based on punch sequence
-  const getActionLabel = (userId: string, timestamp: Date, type: 'IN' | 'OUT', allRecords: AttendanceRecord[]): string => {
-    // Get all records for this user on the same date, sorted by time
-    const userRecords = allRecords
-      .filter(record => record.userId === userId)
-      .filter(record => {
-        const recordDate = new Date(record.timestamp);
-        const targetDate = new Date(timestamp);
-        return recordDate.toDateString() === targetDate.toDateString();
-      })
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    // Find the index of current record
-    const currentIndex = userRecords.findIndex(record => 
-      new Date(record.timestamp).getTime() === new Date(timestamp).getTime() && record.type === type
-    );
-
-    if (currentIndex === -1) return type === 'IN' ? 'Punch In' : 'Punch Out';
-
-    // Determine label based on sequence
-    if (type === 'IN') {
-      if (currentIndex === 0) return 'Started Work';
-      return 'Ended Break';
-    } else { // type === 'OUT'
-      if (currentIndex === 0) return 'Started Break';
-      return 'Ended Work';
+  // Function to determine action label based on new system
+  const getActionLabel = (type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK'): string => {
+    switch (type) {
+      case 'START_WORK':
+        return 'Started Work';
+      case 'START_BREAK':
+        return 'Started Break';
+      case 'STOP_BREAK':
+        return 'Stopped Break';
+      case 'STOP_WORK':
+        return 'Stopped Work';
+      default:
+        return 'Unknown Action';
     }
   };
 
@@ -101,11 +88,19 @@ const AdminLogs: React.FC = () => {
       // Create a user lookup map
       const userMap = new Map(filteredUsers.map(user => [user.id, user.name]));
 
+      // Filter out old IN/OUT records, only keep new state-based actions
+      const newRecords = attendanceRecords.filter(record => 
+        record.type === 'START_WORK' || 
+        record.type === 'STOP_WORK' || 
+        record.type === 'START_BREAK' || 
+        record.type === 'STOP_BREAK'
+      );
+
       // Transform attendance records to log entries
-      const logEntries: LogEntry[] = attendanceRecords.map(record => {
+      const logEntries: LogEntry[] = newRecords.map(record => {
         const userName = userMap.get(record.userId) || 'Unknown User';
         const date = new Date(record.timestamp);
-        const actionLabel = getActionLabel(record.userId, record.timestamp, record.type, attendanceRecords);
+        const actionLabel = getActionLabel(record.type);
         
         return {
           ...record,
@@ -275,7 +270,7 @@ const AdminLogs: React.FC = () => {
               Attendance Logs
             </h2>
             <p className={`${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
-              View detailed punch-in and punch-out records for all users.
+              View detailed attendance action records for all users.
             </p>
           </div>
           <div className="flex items-center space-x-2">
@@ -367,8 +362,10 @@ const AdminLogs: React.FC = () => {
               }`}
             >
               <option value="all">All Actions</option>
-              <option value="IN">Work Actions</option>
-              <option value="OUT">Break Actions</option>
+              <option value="START_WORK">Start Work</option>
+              <option value="STOP_WORK">Stop Work</option>
+              <option value="START_BREAK">Start Break</option>
+              <option value="STOP_BREAK">Stop Break</option>
             </select>
           </div>
 
@@ -457,11 +454,11 @@ const AdminLogs: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${
-                        log.type === 'IN' 
+                        log.type === 'START_WORK' || log.type === 'STOP_WORK'
                           ? (isDarkMode ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-600')
-                          : (isDarkMode ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-600')
+                          : (isDarkMode ? 'bg-orange-900/30 text-orange-400' : 'bg-orange-100 text-orange-600')
                       }`}>
-                        {log.type === 'IN' ? <LogIn size={16} /> : <LogOut size={16} />}
+                        {log.type === 'START_WORK' || log.type === 'STOP_WORK' ? <LogIn size={16} /> : <LogOut size={16} />}
                       </div>
                       <div className="ml-3">
                         <div className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
@@ -475,13 +472,13 @@ const AdminLogs: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      log.type === 'IN'
+                      log.type === 'START_WORK' || log.type === 'STOP_WORK'
                         ? isDarkMode 
                           ? 'bg-green-900/30 text-green-400 border border-green-800/50'
                           : 'bg-green-100 text-green-800 border border-green-200'
                         : isDarkMode
-                          ? 'bg-red-900/30 text-red-400 border border-red-800/50'
-                          : 'bg-red-100 text-red-800 border border-red-200'
+                          ? 'bg-orange-900/30 text-orange-400 border border-orange-800/50'
+                          : 'bg-orange-100 text-orange-800 border border-orange-200'
                     }`}>
                       {log.actionLabel}
                     </span>
@@ -502,7 +499,7 @@ const AdminLogs: React.FC = () => {
             </h3>
             <p className={`mt-1 text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
               {logs.length === 0 
-                ? 'No attendance records found. Records will appear here when users punch in/out.'
+                ? 'No attendance records found. Records will appear here when users perform attendance actions.'
                 : 'No logs match your current filters. Try adjusting your search criteria.'
               }
             </p>
@@ -520,13 +517,27 @@ const AdminLogs: React.FC = () => {
                 <div className={`flex items-center space-x-1 ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>
                   <LogIn size={16} />
                   <span>
-                    {filteredLogs.filter(log => log.type === 'IN').length} Work Actions
+                    {(() => {
+                      // Count actual work sessions (each START_WORK counts as 1 session)
+                      const startWork = filteredLogs.filter(log => log.type === 'START_WORK').length;
+                      const stopWork = filteredLogs.filter(log => log.type === 'STOP_WORK').length;
+                      const incompleteWork = startWork - stopWork;
+                      
+                      return `${startWork} Work ${startWork === 1 ? 'Session' : 'Sessions'}${incompleteWork > 0 ? ` (${incompleteWork} incomplete)` : ''}`;
+                    })()}
                   </span>
                 </div>
-                <div className={`flex items-center space-x-1 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                <div className={`flex items-center space-x-1 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
                   <LogOut size={16} />
                   <span>
-                    {filteredLogs.filter(log => log.type === 'OUT').length} Break Actions
+                    {(() => {
+                      // Count actual breaks (each START_BREAK counts as 1 break)
+                      const startBreaks = filteredLogs.filter(log => log.type === 'START_BREAK').length;
+                      const stopBreaks = filteredLogs.filter(log => log.type === 'STOP_BREAK').length;
+                      const incompleteBreaks = startBreaks - stopBreaks;
+                      
+                      return `${startBreaks} ${startBreaks === 1 ? 'Break' : 'Breaks'}${incompleteBreaks > 0 ? ` (${incompleteBreaks} incomplete)` : ''}`;
+                    })()}
                   </span>
                 </div>
               </div>

@@ -12,7 +12,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { User, AttendanceRecord, AttendanceEntry, HolidayRequest } from '../types';
+import { User, AttendanceRecord, AttendanceEntry, HolidayRequest, UserState } from '../types';
 
 export const getUserBySecretCode = async (secretCode: string): Promise<User | null> => {
   try {
@@ -35,10 +35,21 @@ export const getUserBySecretCode = async (secretCode: string): Promise<User | nu
       hourlyRate: userData.hourlyRate || 15,
       attendanceLog: (userData.attendanceLog || []).map((entry: AttendanceEntry) => ({
         ...entry,
-        timestamp: entry.timestamp && typeof (entry.timestamp as any).toDate === 'function'
-          ? (entry.timestamp as any).toDate()
+        timestamp: entry.timestamp && typeof (entry.timestamp as unknown as { toDate?: () => Date }).toDate === 'function'
+          ? (entry.timestamp as unknown as { toDate: () => Date }).toDate()
           : new Date(entry.timestamp)
-      }))
+      })),
+      currentState: userData.currentState ? {
+        isWorking: userData.currentState.isWorking || false,
+        isOnBreak: userData.currentState.isOnBreak || false,
+        lastAction: userData.currentState.lastAction || null,
+        lastWorkStart: userData.currentState.lastWorkStart ? 
+          (userData.currentState.lastWorkStart.toDate ? userData.currentState.lastWorkStart.toDate() : new Date(userData.currentState.lastWorkStart as string)) : undefined,
+        lastBreakStart: userData.currentState.lastBreakStart ? 
+          (userData.currentState.lastBreakStart.toDate ? userData.currentState.lastBreakStart.toDate() : new Date(userData.currentState.lastBreakStart as string)) : undefined,
+        lastActionTime: userData.currentState.lastActionTime ? 
+          (userData.currentState.lastActionTime.toDate ? userData.currentState.lastActionTime.toDate() : new Date(userData.currentState.lastActionTime as string)) : undefined
+      } : undefined
     };
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -61,8 +72,8 @@ export const getAllUsers = async (): Promise<User[]> => {
         hourlyRate: data.hourlyRate || 15,
         attendanceLog: (data.attendanceLog || []).map((entry: AttendanceEntry) => ({
           ...entry,
-          timestamp: entry.timestamp && typeof (entry.timestamp as any).toDate === 'function'
-            ? (entry.timestamp as any).toDate()
+          timestamp: entry.timestamp && typeof (entry.timestamp as unknown as { toDate?: () => Date }).toDate === 'function'
+            ? (entry.timestamp as unknown as { toDate: () => Date }).toDate()
             : new Date(entry.timestamp)
         }))
       } as User;
@@ -90,8 +101,9 @@ export const createUser = async (userData: Omit<User, 'id'>): Promise<string> =>
 
 export const updateUserAttendance = async (
   userId: string, 
-  attendanceEntry: { timestamp: Date; type: 'IN' | 'OUT' },
-  newAmount?: number
+  attendanceEntry: { timestamp: Date; type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK' },
+  newAmount?: number,
+  newState?: UserState
 ): Promise<void> => {
   try {
     const userRef = doc(db, 'users', userId);
@@ -102,8 +114,9 @@ export const updateUserAttendance = async (
       const updatedLog = [...(userData.attendanceLog || []), attendanceEntry];
       
       const updateData: {
-        attendanceLog: { timestamp: Date; type: 'IN' | 'OUT' }[];
+        attendanceLog: { timestamp: Date; type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK' }[];
         amount?: number;
+        currentState?: UserState;
       } = {
         attendanceLog: updatedLog
       };
@@ -112,11 +125,94 @@ export const updateUserAttendance = async (
         updateData.amount = newAmount;
       }
       
+      if (newState !== undefined) {
+        // Filter out undefined values before saving to Firestore
+        const stateToSave: any = {
+          isWorking: newState.isWorking,
+          isOnBreak: newState.isOnBreak,
+          lastAction: newState.lastAction
+        };
+        
+        if (newState.lastWorkStart) {
+          stateToSave.lastWorkStart = Timestamp.fromDate(newState.lastWorkStart);
+        }
+        if (newState.lastBreakStart) {
+          stateToSave.lastBreakStart = Timestamp.fromDate(newState.lastBreakStart);
+        }
+        if (newState.lastActionTime) {
+          stateToSave.lastActionTime = Timestamp.fromDate(newState.lastActionTime);
+        }
+        
+        updateData.currentState = stateToSave;
+      }
+      
       await updateDoc(userRef, updateData);
     }
   } catch (error) {
     console.error('Error updating user attendance:', error);
+    throw error;
   }
+};
+
+// Helper function to calculate user state from attendance log
+export const calculateUserState = (attendanceLog: AttendanceEntry[]): UserState => {
+  if (attendanceLog.length === 0) {
+    return {
+      isWorking: false,
+      isOnBreak: false,
+      lastAction: null
+    };
+  }
+
+  // Sort by timestamp to get the latest entries
+  const sortedLog = [...attendanceLog].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  const lastEntry = sortedLog[0];
+
+  // Find the most recent work start and break start
+  let lastWorkStart: Date | undefined;
+  let lastBreakStart: Date | undefined;
+
+  // Since sortedLog is already sorted by timestamp descending, we can find the most recent ones
+  for (const entry of sortedLog) {
+    if (entry.type === 'START_WORK' && !lastWorkStart) {
+      lastWorkStart = entry.timestamp;
+    }
+    if (entry.type === 'START_BREAK' && !lastBreakStart) {
+      lastBreakStart = entry.timestamp;
+    }
+  }
+
+  // Determine current state based on last action
+  let isWorking = false;
+  let isOnBreak = false;
+
+  switch (lastEntry.type) {
+    case 'START_WORK':
+      isWorking = true;
+      isOnBreak = false;
+      break;
+    case 'START_BREAK':
+      isWorking = false;
+      isOnBreak = true;
+      break;
+    case 'STOP_BREAK':
+      isWorking = true;
+      isOnBreak = false;
+      break;
+    case 'STOP_WORK':
+      isWorking = false;
+      isOnBreak = false;
+      break;
+  }
+
+  return {
+    isWorking,
+    isOnBreak,
+    lastWorkStart,
+    lastBreakStart,
+    lastAction: lastEntry.type,
+    lastActionTime: lastEntry.timestamp
+  };
 };
 
 export const createAttendanceRecord = async (record: Omit<AttendanceRecord, 'id'>): Promise<void> => {
@@ -132,8 +228,8 @@ export const createAttendanceRecord = async (record: Omit<AttendanceRecord, 'id'
 };
 
 export const getAttendanceRecords = async (
-  startDate?: Date,
-  endDate?: Date,
+  _startDate?: Date,
+  _endDate?: Date,
   userId?: string
 ): Promise<AttendanceRecord[]> => {
   try {
