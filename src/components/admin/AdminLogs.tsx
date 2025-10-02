@@ -517,11 +517,6 @@ const AdminLogs: React.FC = () => {
                 }`}>
                   Action
                 </th>
-                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                  isDarkMode ? 'text-slate-300' : 'text-slate-500'
-                }`}>
-                  Operations
-                </th>
               </tr>
             </thead>
             <tbody className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} divide-y divide-slate-200`}>
@@ -574,32 +569,6 @@ const AdminLogs: React.FC = () => {
                     }`}>
                       {log.actionLabel}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => handleEditLog(log)}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          isDarkMode 
-                            ? 'text-blue-400 hover:bg-blue-900/20 hover:text-blue-300' 
-                            : 'text-blue-600 hover:bg-blue-100 hover:text-blue-700'
-                        }`}
-                        title="Edit entry"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteLog(log.id)}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          isDarkMode 
-                            ? 'text-red-400 hover:bg-red-900/20 hover:text-red-300' 
-                            : 'text-red-600 hover:bg-red-100 hover:text-red-700'
-                        }`}
-                        title="Delete entry"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
                   </td>
                 </motion.tr>
               ))}
