@@ -9,6 +9,7 @@ import AdminHolidayRequests from './components/admin/AdminHolidayRequests';
 import AttendanceDetail from './components/admin/AttendanceDetail';
 import CurrentlyWorking from './components/admin/CurrentlyWorking';
 import AdminLogs from './components/admin/AdminLogs';
+import AdminDailyOverview from './components/admin/AdminDailyOverview';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
           <Route path="/" element={<CodeEntry />} />
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminMain />} />
+            <Route path="daily-overview" element={<AdminDailyOverview />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="holiday-requests" element={<AdminHolidayRequests />} />
             <Route path="settings" element={<AdminSettings />} />

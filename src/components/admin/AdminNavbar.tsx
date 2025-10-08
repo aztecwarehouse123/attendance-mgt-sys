@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Users, BarChart3, LogOut, Settings } from 'lucide-react';
+import { Users, BarChart3, LogOut, Settings, CalendarDays } from 'lucide-react';
 
 const AdminNavbar: React.FC = () => {
   const location = useLocation();
@@ -31,6 +31,18 @@ const AdminNavbar: React.FC = () => {
               >
                 <Users className="w-5 h-5" />
                 <span className="font-medium">Main</span>
+              </Link>
+
+              <Link
+                to="/admin/daily-overview"
+                className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                  location.pathname === '/admin/daily-overview'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <CalendarDays className="w-5 h-5" />
+                <span className="font-medium">Daily Overview</span>
               </Link>
               
               <Link

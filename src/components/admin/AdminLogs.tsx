@@ -161,12 +161,18 @@ const AdminLogs: React.FC = () => {
 
     // Filter by date range
     if (startDate) {
-      const start = new Date(startDate);
-      filtered = filtered.filter(log => new Date(log.timestamp) >= start);
+      const start = new Date(startDate + 'T00:00:00');
+      filtered = filtered.filter(log => {
+        const logDate = new Date(log.timestamp);
+        return logDate >= start;
+      });
     }
     if (endDate) {
       const end = new Date(endDate + 'T23:59:59');
-      filtered = filtered.filter(log => new Date(log.timestamp) <= end);
+      filtered = filtered.filter(log => {
+        const logDate = new Date(log.timestamp);
+        return logDate <= end;
+      });
     }
 
     // Filter by log type
@@ -517,6 +523,11 @@ const AdminLogs: React.FC = () => {
                 }`}>
                   Action
                 </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                  isDarkMode ? 'text-slate-300' : 'text-slate-500'
+                }`}>
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} divide-y divide-slate-200`}>
@@ -569,6 +580,32 @@ const AdminLogs: React.FC = () => {
                     }`}>
                       {log.actionLabel}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => handleEditLog(log)}
+                        className={`p-2 rounded-md transition-colors ${
+                          isDarkMode 
+                            ? 'text-blue-400 hover:bg-slate-700 hover:text-blue-300' 
+                            : 'text-blue-600 hover:bg-blue-50 hover:text-blue-700'
+                        }`}
+                        title="Edit entry"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteLog(log.id)}
+                        className={`p-2 rounded-md transition-colors ${
+                          isDarkMode 
+                            ? 'text-red-400 hover:bg-slate-700 hover:text-red-300' 
+                            : 'text-red-600 hover:bg-red-50 hover:text-red-700'
+                        }`}
+                        title="Delete entry"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </motion.tr>
               ))}

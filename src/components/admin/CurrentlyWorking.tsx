@@ -33,42 +33,83 @@ const CurrentlyWorking: React.FC = () => {
 
 
 
-  // Helper to group attendance by date and find missed punch outs
+  // Helper to find users who forgot to stop work or break (unmatched START entries)
   const getForgotToPunchOut = () => {
     const todayStr = new Date().toDateString();
-    const result: { user: User; dates: string[] }[] = [];
+    const result: { user: User; dates: string[]; types: string[] }[] = [];
+    
     users.forEach(user => {
-      // Filter only new state-based actions
-      const newEntries = user.attendanceLog.filter(entry => 
-        entry.type === 'START_WORK' || 
-        entry.type === 'STOP_WORK' || 
-        entry.type === 'START_BREAK' || 
-        entry.type === 'STOP_BREAK'
-      );
+      // Filter all start/stop actions and sort by timestamp
+      const allEntries = user.attendanceLog.filter(entry => 
+        entry.type === 'START_WORK' || entry.type === 'STOP_WORK' ||
+        entry.type === 'START_BREAK' || entry.type === 'STOP_BREAK'
+      ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       
-      // Group entries by date string
-      const byDate: { [date: string]: AttendanceEntry[] } = {};
-      newEntries.forEach(entry => {
+      // Track unmatched entries
+      const unmatchedEntries: { date: string; timestamp: Date; type: 'work' | 'break' }[] = [];
+      let pendingWork: { date: string; timestamp: Date } | null = null;
+      let pendingBreak: { date: string; timestamp: Date } | null = null;
+      
+      // Go through all entries chronologically
+      for (const entry of allEntries) {
         const entryDate = new Date(entry.timestamp);
         const dateStr = entryDate.toDateString();
-        if (!byDate[dateStr]) byDate[dateStr] = [];
-        byDate[dateStr].push(entry);
-      });
-      // For each day except today, check if last action was work or break start
+        
+        if (entry.type === 'START_WORK') {
+          // If there's already a pending START_WORK, it means the previous one was unmatched
+          if (pendingWork) {
+            unmatchedEntries.push({ date: pendingWork.date, timestamp: pendingWork.timestamp, type: 'work' });
+          }
+          // Set this as the new pending START_WORK
+          pendingWork = { date: dateStr, timestamp: entryDate };
+        } else if (entry.type === 'STOP_WORK') {
+          if (pendingWork) {
+            // This START_WORK has a corresponding STOP_WORK, so it's matched
+            pendingWork = null;
+          }
+        } else if (entry.type === 'START_BREAK') {
+          // If there's already a pending START_BREAK, it means the previous one was unmatched
+          if (pendingBreak) {
+            unmatchedEntries.push({ date: pendingBreak.date, timestamp: pendingBreak.timestamp, type: 'break' });
+          }
+          // Set this as the new pending START_BREAK
+          pendingBreak = { date: dateStr, timestamp: entryDate };
+        } else if (entry.type === 'STOP_BREAK') {
+          if (pendingBreak) {
+            // This START_BREAK has a corresponding STOP_BREAK, so it's matched
+            pendingBreak = null;
+          }
+        }
+      }
+      
+      // If there's still a pending START_WORK or START_BREAK at the end, it's unmatched
+      if (pendingWork) {
+        unmatchedEntries.push({ date: pendingWork.date, timestamp: pendingWork.timestamp, type: 'work' });
+      }
+      if (pendingBreak) {
+        unmatchedEntries.push({ date: pendingBreak.date, timestamp: pendingBreak.timestamp, type: 'break' });
+      }
+      
+      // Group unmatched entries by date and type
       const missedDates: string[] = [];
-      Object.entries(byDate).forEach(([dateStr, entries]) => {
-        if (dateStr === todayStr) return;
-        if (entries.length === 0) return;
-        const sorted = [...entries].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        const lastEntry = sorted[sorted.length - 1];
-        if (lastEntry.type === 'START_WORK' || lastEntry.type === 'START_BREAK') {
-          missedDates.push(dateStr);
+      const missedTypes: string[] = [];
+      const uniqueDates = new Set<string>();
+      
+      unmatchedEntries.forEach(({ date, type }) => {
+        if (date !== todayStr) { // Don't include today's unmatched entries
+          uniqueDates.add(date);
+          if (!missedTypes.includes(type)) {
+            missedTypes.push(type);
+          }
         }
       });
-      if (missedDates.length > 0) {
-        result.push({ user, dates: missedDates });
+      
+      if (uniqueDates.size > 0) {
+        missedDates.push(...Array.from(uniqueDates));
+        result.push({ user, dates: missedDates, types: missedTypes });
       }
     });
+    
     return result;
   };
 
@@ -123,11 +164,51 @@ const CurrentlyWorking: React.FC = () => {
 
   // Helper function to calculate detailed time breakdown
   const getDetailedTimeBreakdown = (user: User, state: { isWorking: boolean; lastAction?: string | null; lastActionTime?: Date | null }) => {
-    const todayStr = new Date().toDateString();
-    const todayEntries = user.attendanceLog.filter(entry => {
-      const entryDate = new Date(entry.timestamp);
-      return entryDate.toDateString() === todayStr;
-    }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    // For currently working users, we need to look at the current work session
+    // which might span across days (e.g., started yesterday, still working today)
+    let relevantEntries = user.attendanceLog;
+    
+    // If user is currently working, find the current work session start
+    if (state.isWorking && state.lastActionTime) {
+      // Find the most recent START_WORK that hasn't been stopped
+      const allEntries = user.attendanceLog
+        .filter(entry => entry.type === 'START_WORK' || entry.type === 'STOP_WORK' || 
+                        entry.type === 'START_BREAK' || entry.type === 'STOP_BREAK')
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
+      let currentWorkStart: Date | null = null;
+      let pendingStartWork: Date | null = null;
+      
+      for (const entry of allEntries) {
+        if (entry.type === 'START_WORK') {
+          pendingStartWork = new Date(entry.timestamp);
+        } else if (entry.type === 'STOP_WORK') {
+          pendingStartWork = null;
+        }
+        // Breaks don't end work sessions, so we continue
+      }
+      
+      // If we found a pending START_WORK, that's our current work session start
+      if (pendingStartWork) {
+        currentWorkStart = pendingStartWork;
+      }
+      
+      // Filter entries to only include those from the current work session onwards
+      if (currentWorkStart) {
+        relevantEntries = user.attendanceLog.filter(entry => 
+          new Date(entry.timestamp).getTime() >= currentWorkStart.getTime()
+        );
+      }
+    } else {
+      // For non-working users, just look at today's entries
+      const todayStr = new Date().toDateString();
+      relevantEntries = user.attendanceLog.filter(entry => {
+        const entryDate = new Date(entry.timestamp);
+        return entryDate.toDateString() === todayStr;
+      });
+    }
+    
+    const sortedEntries = relevantEntries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     let totalWorkTimeBeforeBreaks = 0;
     let totalBreakTime = 0;
@@ -138,7 +219,7 @@ const CurrentlyWorking: React.FC = () => {
     let lastBreakEndTime: Date | null = null;
     let isAfterBreak = false;
 
-    for (const entry of todayEntries) {
+    for (const entry of sortedEntries) {
       const entryTime = new Date(entry.timestamp);
       
       switch (entry.type) {
@@ -460,28 +541,42 @@ const CurrentlyWorking: React.FC = () => {
                   const lastEntry = sortedEntries[sortedEntries.length - 1];
                   const workCompletedAt = new Date(lastEntry.timestamp).toLocaleTimeString();
                   
-                  // Calculate total work time for today
-                  let totalWorkMinutes = 0;
-                  let workStartTime: Date | null = null;
+                  // Find the corresponding START_WORK for this STOP_WORK
+                  // Look through all entries (not just today's) to find the matching START_WORK
+                  const allEntries = user.attendanceLog.filter(entry => 
+                    entry.type === 'START_WORK' || 
+                    entry.type === 'STOP_WORK' || 
+                    entry.type === 'START_BREAK' || 
+                    entry.type === 'STOP_BREAK'
+                  ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
                   
-                  for (const entry of sortedEntries) {
-                    switch (entry.type) {
-                      case 'START_WORK':
-                        workStartTime = new Date(entry.timestamp);
-                        break;
-                      case 'START_BREAK':
-                        // Breaks are paid - don't stop counting
-                        break;
-                      case 'STOP_BREAK':
-                        // Breaks are paid - continue counting
-                        break;
-                      case 'STOP_WORK':
-                        if (workStartTime) {
-                          totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
-                          workStartTime = null;
+                  // Find the START_WORK that corresponds to this STOP_WORK
+                  let correspondingStartWork: Date | null = null;
+                  let pendingStartWork: Date | null = null;
+                  
+                  for (const entry of allEntries) {
+                    if (entry.type === 'START_WORK') {
+                      pendingStartWork = new Date(entry.timestamp);
+                    } else if (entry.type === 'STOP_WORK') {
+                      if (pendingStartWork) {
+                        // Check if this is the STOP_WORK we're looking for
+                        if (new Date(entry.timestamp).getTime() === new Date(lastEntry.timestamp).getTime()) {
+                          correspondingStartWork = pendingStartWork;
+                          break;
                         }
-                        break;
+                        pendingStartWork = null;
+                      }
+                    } else if (entry.type === 'START_BREAK' || entry.type === 'STOP_BREAK') {
+                      // Breaks don't affect work session tracking
+                      continue;
                     }
+                  }
+                  
+                  // Calculate total work time
+                  let totalWorkMinutes = 0;
+                  if (correspondingStartWork) {
+                    const stopWorkTime = new Date(lastEntry.timestamp);
+                    totalWorkMinutes = (stopWorkTime.getTime() - correspondingStartWork.getTime()) / (1000 * 60);
                   }
                   
                   const totalHours = Math.floor(totalWorkMinutes / 60);
@@ -516,14 +611,35 @@ const CurrentlyWorking: React.FC = () => {
                   <th className="px-4 py-2 text-left font-semibold">Name</th>
                   <th className="px-4 py-2 text-left font-semibold">Secret Code</th>
                   <th className="px-4 py-2 text-left font-semibold">Date(s)</th>
+                  <th className="px-4 py-2 text-left font-semibold">Forgot to Stop</th>
                 </tr>
               </thead>
               <tbody className={isDarkMode ? 'bg-slate-700' : 'bg-white'}>
-                {forgotToPunchOut.map(({ user, dates }) => (
+                {forgotToPunchOut.map(({ user, dates, types }) => (
                   <tr key={user.id} className="border-b border-gray-300">
                     <td className="px-4 py-2 whitespace-nowrap">{user.name}</td>
                     <td className="px-4 py-2 whitespace-nowrap">{user.secretCode}</td>
                     <td className="px-4 py-2 whitespace-nowrap">{dates.join(', ')}</td>
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <div className="flex flex-wrap gap-1">
+                        {types.map((type, index) => (
+                          <span
+                            key={index}
+                            className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              type === 'work'
+                                ? isDarkMode
+                                  ? 'bg-red-900/50 text-red-300 border border-red-800/50'
+                                  : 'bg-red-100 text-red-800 border border-red-200'
+                                : isDarkMode
+                                  ? 'bg-orange-900/50 text-orange-300 border border-orange-800/50'
+                                  : 'bg-orange-100 text-orange-800 border border-orange-200'
+                            }`}
+                          >
+                            {type === 'work' ? 'Work' : 'Break'}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

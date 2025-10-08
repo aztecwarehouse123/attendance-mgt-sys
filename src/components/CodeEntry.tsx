@@ -27,12 +27,17 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
   const [forgotOutTime, setForgotOutTime] = useState('');
   const [forgotOutDate, setForgotOutDate] = useState<Date | null>(null);
   const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [yesterdayWorkContinuationOption, setYesterdayWorkContinuationOption] = useState<'continue' | 'stop' | 'start'>('continue');
+  const [yesterdayWorkStopTime, setYesterdayWorkStopTime] = useState('');
+  const [yesterdayWorkStopDate, setYesterdayWorkStopDate] = useState<Date | null>(null);
   const [pendingNow, setPendingNow] = useState<Date | null>(null);
   const [showForgotBreakModal, setShowForgotBreakModal] = useState(false);
   const [forgotBreakStopTime, setForgotBreakStopTime] = useState('');
   const [pendingBreakUser, setPendingBreakUser] = useState<User | null>(null);
-  const [showForgotWorkModal, setShowForgotWorkModal] = useState(false);
+  const [workContinuationOption, setWorkContinuationOption] = useState<'continue' | 'stop' | 'start'>('continue');
   const [forgotWorkStopTime, setForgotWorkStopTime] = useState('');
+  const [forgotWorkStopDate, setForgotWorkStopDate] = useState<Date | null>(null);
+  const [showForgotWorkModal, setShowForgotWorkModal] = useState(false);
   const [pendingWorkUser, setPendingWorkUser] = useState<User | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userState, setUserState] = useState<UserState | null>(null);
@@ -212,6 +217,16 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
               setCode('');
               return;
             }
+            // Prevent starting a break if the current work session has exceeded 12 hours
+            if (currentState.lastWorkStart) {
+              const minutesSinceWorkStart = (now.getTime() - currentState.lastWorkStart.getTime()) / (1000 * 60);
+              if (minutesSinceWorkStart >= 12 * 60) {
+                setShowForgotWorkModal(true);
+                setPendingWorkUser(user);
+                setIsLoading(false);
+                return;
+              }
+            }
             actionType = 'START_BREAK';
             actionMessage = 'Started Break';
             break;
@@ -231,12 +246,10 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
         // Auto-detect action based on current state
         // Priority order: Stop Break > Stop Work > Start Break > Start Work
         if (availableActions.canStopBreak) {
-          // Check if break duration is longer than 1.5 hours
+          // Check if break duration is at least 1.5 hours (>= 90 minutes)
           if (currentState.lastBreakStart) {
             const breakDurationMinutes = (now.getTime() - currentState.lastBreakStart.getTime()) / (1000 * 60);
-            const breakDurationHours = breakDurationMinutes / 60;
-            
-            if (breakDurationHours > 1.5) {
+            if (breakDurationMinutes >= 90) {
               // Break is too long - user probably forgot to stop break
               setShowForgotBreakModal(true);
               setPendingBreakUser(user);
@@ -368,39 +381,144 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
   // Handler for modal submit
   const handleForgotOutSubmit = async () => {
     if (!pendingUser || !forgotOutTime || !forgotOutDate) return;
-    setIsLoading(true);
-    // Compose punch out datetime for yesterday
-    const [h, m] = forgotOutTime.split(':');
-    const punchOutDate = new Date(forgotOutDate);
-    punchOutDate.setHours(Number(h), Number(m), 0, 0);
     
-    // Determine what type of action to add for yesterday
-    const yesterdayState = getUserState(pendingUser);
-    let yesterdayActionType: 'STOP_WORK' | 'STOP_BREAK';
-    if (yesterdayState.isOnBreak) {
-      yesterdayActionType = 'STOP_BREAK';
-    } else {
-      yesterdayActionType = 'STOP_WORK';
+    // Validate required fields based on work continuation option
+    if (yesterdayWorkContinuationOption === 'start' && (!yesterdayWorkStopTime || !yesterdayWorkStopDate)) {
+      setMessage('Please enter the work stop time and date.');
+      setMessageType('error');
+      return;
     }
     
-    // Add appropriate entry for yesterday
-    await updateUserAttendance(
-      pendingUser.id,
-      { timestamp: punchOutDate, type: yesterdayActionType }
-    );
+    setIsLoading(true);
     
-    // After fixing, start work for today
-    const now = pendingNow || new Date();
-    await updateUserAttendance(
-      pendingUser.id,
-      { timestamp: now, type: 'START_WORK' }
-    );
-    // Note: Attendance data is now stored only in users.attendanceLog
-    setMessage(`${pendingUser.name} - Started Work at ${formatTime(now)}`);
-    setMessageType('success');
-    setCode('');
-    setShowForgotModal(false);
-    setIsLoading(false);
+    try {
+      // Compose punch out datetime for yesterday
+      const [h, m] = forgotOutTime.split(':');
+      const punchOutDate = new Date(forgotOutDate);
+      punchOutDate.setHours(Number(h), Number(m), 0, 0);
+      
+      // Determine what type of action to add for yesterday
+      const yesterdayState = getUserState(pendingUser);
+      let yesterdayActionType: 'STOP_WORK' | 'STOP_BREAK';
+      if (yesterdayState.isOnBreak) {
+        yesterdayActionType = 'STOP_BREAK';
+      } else {
+        yesterdayActionType = 'STOP_WORK';
+      }
+      
+      const now = pendingNow || new Date();
+      let workStopDate: Date | null = null;
+      let newState: {
+        isWorking: boolean;
+        isOnBreak: boolean;
+        lastAction: 'START_WORK' | 'STOP_WORK' | 'STOP_BREAK';
+        lastActionTime: Date;
+      } = {
+        isWorking: false,
+        isOnBreak: false,
+        lastAction: 'STOP_WORK',
+        lastActionTime: new Date()
+      };
+      let successMessage = '';
+      
+      // Handle different work continuation options
+      if (yesterdayWorkContinuationOption === 'continue') {
+        // Just record yesterday's stop, keep work session active (no new START_WORK entry needed)
+        newState = {
+          isWorking: true,
+          isOnBreak: false,
+          lastAction: 'START_WORK' as const,
+          lastActionTime: now
+        };
+        successMessage = `${pendingUser.name} - Yesterday's stop recorded. Work session continues today.`;
+        
+        // Add yesterday's stop entry and update state in one call
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: punchOutDate, type: yesterdayActionType },
+          undefined,
+          newState
+        );
+      } else if (yesterdayWorkContinuationOption === 'stop') {
+        // Stop work at current time (no need to ask user for time)
+        workStopDate = now;
+        
+        newState = {
+          isWorking: false,
+          isOnBreak: false,
+          lastAction: 'STOP_WORK' as const,
+          lastActionTime: workStopDate
+        };
+        successMessage = `${pendingUser.name} - Yesterday's stop recorded, work session ended at ${formatTime(workStopDate)}`;
+        
+        // Add yesterday's stop entry
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: punchOutDate, type: yesterdayActionType }
+        );
+        
+        // Add STOP_WORK entry and update state in one call
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: workStopDate, type: 'STOP_WORK' },
+          undefined,
+          newState
+        );
+      } else if (yesterdayWorkContinuationOption === 'start') {
+        // Stop work at specified time and start new work session today
+        const [workH, workM] = yesterdayWorkStopTime.split(':');
+        workStopDate = new Date(yesterdayWorkStopDate!);
+        workStopDate.setHours(Number(workH), Number(workM), 0, 0);
+        
+        // Add yesterday's stop entry
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: punchOutDate, type: yesterdayActionType }
+        );
+        
+        // Add STOP_WORK entry for yesterday
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: workStopDate, type: 'STOP_WORK' }
+        );
+        
+        newState = {
+          isWorking: true,
+          isOnBreak: false,
+          lastAction: 'START_WORK' as const,
+          lastActionTime: now
+        };
+        successMessage = `${pendingUser.name} - Yesterday's work ended at ${formatTime(workStopDate)}, new work session started today at ${formatTime(now)}`;
+        
+        // Add START_WORK entry and update state in one call
+        await updateUserAttendance(
+          pendingUser.id,
+          { timestamp: now, type: 'START_WORK' },
+          undefined,
+          newState
+        );
+      }
+      
+      // All options are now handled above, no need for additional calls
+      
+      setMessage(successMessage);
+      setMessageType('success');
+      
+      setCode('');
+      setShowForgotModal(false);
+      setForgotOutTime('');
+      setForgotOutDate(null);
+      setYesterdayWorkContinuationOption('continue');
+      setYesterdayWorkStopTime('');
+      setYesterdayWorkStopDate(null);
+      
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error handling forgot out:', error);
+      setMessage('An error occurred. Please try again.');
+      setMessageType('error');
+      setIsLoading(false);
+    }
   };
 
   const handleForgotWorkSubmit = async () => {
@@ -507,105 +625,154 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
 
   const handleForgotBreakSubmit = async () => {
     if (!pendingBreakUser || !forgotBreakStopTime) return;
+    
+    // Validate required fields based on work continuation option
+    if (workContinuationOption === 'start' && (!forgotWorkStopTime || !forgotWorkStopDate)) {
+      setMessage('Please enter the work stop time and date.');
+      setMessageType('error');
+      return;
+    }
+    
     setIsLoading(true);
     
     try {
       // Parse the time user entered for when they stopped break
       const [h, m] = forgotBreakStopTime.split(':');
-      const breakStopDate = new Date();
+      
+      // Get the break start time to use the same date
+      const breakStartTime = currentUser?.currentState?.lastBreakStart;
+      if (!breakStartTime) {
+        setMessage('Error: Could not find break start time.');
+        setMessageType('error');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Create break stop date using the same date as break start
+      const breakStopDate = new Date(breakStartTime);
       breakStopDate.setHours(Number(h), Number(m), 0, 0);
       
       // Validate that break stop time is after break start time
-      const breakStartTime = currentUser?.currentState?.lastBreakStart;
-      if (breakStartTime && breakStopDate <= breakStartTime) {
+      if (breakStopDate <= breakStartTime) {
         setMessage('Break stop time must be after break start time.');
         setMessageType('error');
         setIsLoading(false);
         return;
       }
       
-      // Add STOP_BREAK entry for the time user specified
-      await updateUserAttendance(
-        pendingBreakUser.id,
-        { timestamp: breakStopDate, type: 'STOP_BREAK' }
-      );
-      
-      // Note: Attendance data is now stored only in users.attendanceLog
-      
-      // Now add STOP_WORK entry for current time
       const now = new Date();
+      let workStopDate: Date | null = null;
+      let newState: {
+        isWorking: boolean;
+        isOnBreak: boolean;
+        lastAction: 'START_WORK' | 'STOP_WORK' | 'STOP_BREAK';
+        lastActionTime: Date;
+      } = {
+        isWorking: false,
+        isOnBreak: false,
+        lastAction: 'STOP_WORK',
+        lastActionTime: new Date()
+      };
+      let successMessage = '';
       
-      // Calculate amount earned for the work session
-      const userDoc = await getDoc(doc(db, 'users', pendingBreakUser.id));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        const updatedLog = [...(userData.attendanceLog || []), 
-          { timestamp: breakStopDate, type: 'STOP_BREAK' }
-        ];
+      // Handle different work continuation options
+      if (workContinuationOption === 'continue') {
+        // Just stop the break, keep work session active
+        newState = {
+          isWorking: true,
+          isOnBreak: false,
+          lastAction: 'STOP_BREAK' as const,
+          lastActionTime: breakStopDate
+        };
+        successMessage = `${pendingBreakUser.name} - Break stopped at ${formatTime(breakStopDate)}. Work session continues.`;
         
-        // Calculate work hours for amount
-        let totalWorkMinutes = 0;
-        let workStartTime: Date | null = null;
-        
-        const todayEntries = updatedLog.filter((entry: AttendanceEntry) => {
-          const entryDate = new Date(entry.timestamp);
-          const today = new Date();
-          return entryDate.toDateString() === today.toDateString();
-        }).sort((a: AttendanceEntry, b: AttendanceEntry) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        // Add STOP_BREAK entry and update state in one call
+        await updateUserAttendance(
+          pendingBreakUser.id,
+          { timestamp: breakStopDate, type: 'STOP_BREAK' },
+          undefined,
+          newState
         );
+      } else if (workContinuationOption === 'stop') {
+        // Stop work at current time (no need to ask user for time)
+        workStopDate = now;
         
-        for (const entry of todayEntries) {
-          switch (entry.type) {
-            case 'START_WORK':
-              workStartTime = new Date(entry.timestamp);
-              break;
-            case 'START_BREAK':
-              break; // Breaks are paid, continue counting
-            case 'STOP_BREAK':
-              break; // Breaks are paid, continue counting
-            case 'STOP_WORK':
-              if (workStartTime) {
-                totalWorkMinutes += (new Date(entry.timestamp).getTime() - workStartTime.getTime()) / (1000 * 60);
-                workStartTime = null;
-              }
-              break;
-          }
-        }
-        
-        // Add time from work start to now (for STOP_WORK)
-        if (workStartTime) {
-          totalWorkMinutes += (now.getTime() - workStartTime.getTime()) / (1000 * 60);
-        }
-        
-        const amountEarned = Number(((totalWorkMinutes / 60) * pendingBreakUser.hourlyRate).toFixed(2));
-        const newTotalAmount = pendingBreakUser.amount + amountEarned;
-        
-        // Calculate new state after STOP_WORK
-        const newState = {
+        newState = {
           isWorking: false,
           isOnBreak: false,
           lastAction: 'STOP_WORK' as const,
-          lastActionTime: now
+          lastActionTime: workStopDate
         };
+        successMessage = `${pendingBreakUser.name} - Break stopped at ${formatTime(breakStopDate)}, Work session ended at ${formatTime(workStopDate)}`;
         
+        // Add STOP_BREAK entry at the specified break stop time
         await updateUserAttendance(
           pendingBreakUser.id,
-          { timestamp: now, type: 'STOP_WORK' },
-          newTotalAmount,
+          { timestamp: breakStopDate, type: 'STOP_BREAK' }
+        );
+
+        // Add STOP_WORK entry and update state in one call
+        await updateUserAttendance(
+          pendingBreakUser.id,
+          { timestamp: workStopDate, type: 'STOP_WORK' },
+          undefined,
           newState
         );
+      } else if (workContinuationOption === 'start') {
+        // Stop work at specified time and start new work session
+        const [workH, workM] = forgotWorkStopTime.split(':');
+        workStopDate = new Date(forgotWorkStopDate!);
+        workStopDate.setHours(Number(workH), Number(workM), 0, 0);
         
-        // Note: Attendance data is now stored only in users.attendanceLog
+        // Validate work stop time is after break stop time
+        if (workStopDate <= breakStopDate) {
+          setMessage('Work stop time must be after break stop time.');
+          setMessageType('error');
+          setIsLoading(false);
+          return;
+        }
         
-        setMessage(`${pendingBreakUser.name} - Break stopped at ${formatTime(breakStopDate)}, Work stopped at ${formatTime(now)}`);
-        setMessageType('success');
+        // Add STOP_BREAK entry at the specified break stop time before closing work
+        await updateUserAttendance(
+          pendingBreakUser.id,
+          { timestamp: breakStopDate, type: 'STOP_BREAK' }
+        );
+
+        // Add STOP_WORK entry
+        await updateUserAttendance(
+          pendingBreakUser.id,
+          { timestamp: workStopDate, type: 'STOP_WORK' }
+        );
+        
+        newState = {
+          isWorking: true,
+          isOnBreak: false,
+          lastAction: 'START_WORK' as const,
+          lastActionTime: now
+        };
+        successMessage = `${pendingBreakUser.name} - Break stopped at ${formatTime(breakStopDate)}, Previous work ended at ${formatTime(workStopDate)}, New work session started at ${formatTime(now)}`;
+        
+        // Add START_WORK entry and update state in one call
+        await updateUserAttendance(
+          pendingBreakUser.id,
+          { timestamp: now, type: 'START_WORK' },
+          undefined,
+          newState
+        );
       }
+      
+      // All options are now handled above, no need for additional calls
+      
+      setMessage(successMessage);
+      setMessageType('success');
       
       setCode('');
       setShowForgotBreakModal(false);
       setForgotBreakStopTime('');
       setPendingBreakUser(null);
+      setWorkContinuationOption('continue');
+      setForgotWorkStopTime('');
+      setForgotWorkStopDate(null);
       
       // Refresh user state display
       setCurrentUser(null);
@@ -923,53 +1090,254 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
       </motion.div>
       <Modal
         isOpen={showForgotModal}
-        onClose={() => setShowForgotModal(false)}
+        onClose={() => {
+          setShowForgotModal(false);
+          setForgotOutTime('');
+          setForgotOutDate(null);
+          setYesterdayWorkContinuationOption('continue');
+          setYesterdayWorkStopTime('');
+          setYesterdayWorkStopDate(null);
+          // Clear code page state when modal closes
+          setCode('');
+          setMessage('');
+          setCurrentUser(null);
+          setUserState(null);
+        }}
         title="Forgot to Stop Work/Break Yesterday"
         size="md"
       >
         <div className="space-y-4">
-          <p>You forgot to stop work or break yesterday. Please enter the time when you stopped to complete your attendance record.</p>
-          <input
-            type="time"
-            value={forgotOutTime}
-            onChange={e => setForgotOutTime(e.target.value)}
-            className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent"
-            min={(() => {
-              if (!pendingUser || !forgotOutDate) return undefined;
-              // Find last IN time for yesterday
-              const entries = (pendingUser.attendanceLog || []).filter((entry: AttendanceEntry) => {
-                const entryDate = toJSDate(entry.timestamp);
-                return (
-                  entryDate.getFullYear() === forgotOutDate.getFullYear() &&
-                  entryDate.getMonth() === forgotOutDate.getMonth() &&
-                  entryDate.getDate() === forgotOutDate.getDate()
-                );
-              });
-              const lastIn = entries.length > 0 ? toJSDate(entries[entries.length - 1].timestamp) : null;
-              if (lastIn) {
-                return lastIn.toTimeString().slice(0,5);
-              }
-              return undefined;
-            })()}
-            max="23:59"
-            required
-          />
+          <div className={`p-4 rounded-md ${isDarkMode ? 'bg-orange-900/30 border border-orange-700' : 'bg-orange-50 border border-orange-200'}`}>
+            <p className={`font-semibold ${isDarkMode ? 'text-orange-300' : 'text-orange-800'}`}>
+              ⚠️ You forgot to stop work or break yesterday!
+            </p>
+            <p className={`mt-2 text-sm ${isDarkMode ? 'text-orange-200' : 'text-orange-700'}`}>
+              Please enter the time when you actually stopped to complete your attendance record.
+            </p>
+          </div>
+          
+          <div>
+            <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              What time did you stop yesterday?
+            </label>
+            <input
+              type="time"
+              value={forgotOutTime}
+              onChange={e => setForgotOutTime(e.target.value)}
+              className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
+                isDarkMode 
+                  ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                  : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
+              }`}
+              min={(() => {
+                if (!pendingUser || !forgotOutDate) return undefined;
+                // Find last IN time for yesterday
+                const entries = (pendingUser.attendanceLog || []).filter((entry: AttendanceEntry) => {
+                  const entryDate = toJSDate(entry.timestamp);
+                  return (
+                    entryDate.getFullYear() === forgotOutDate.getFullYear() &&
+                    entryDate.getMonth() === forgotOutDate.getMonth() &&
+                    entryDate.getDate() === forgotOutDate.getDate()
+                  );
+                });
+                const lastIn = entries.length > 0 ? toJSDate(entries[entries.length - 1].timestamp) : null;
+                if (lastIn) {
+                  return lastIn.toTimeString().slice(0,5);
+                }
+                return undefined;
+              })()}
+              max="23:59"
+              required
+            />
+          </div>
+
+          {/* Work Continuation Options */}
+          <div>
+            <label className={`block text-sm font-medium mb-3 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              What are you doing now?
+            </label>
+            <div className="space-y-3">
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                yesterdayWorkContinuationOption === 'continue' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="yesterdayWorkContinuation"
+                  value="continue"
+                  checked={yesterdayWorkContinuationOption === 'continue'}
+                  onChange={e => setYesterdayWorkContinuationOption(e.target.value as 'continue')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Continue Working
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Just save the stop time and continue working today
+                  </div>
+                </div>
+              </label>
+
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                yesterdayWorkContinuationOption === 'stop' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="yesterdayWorkContinuation"
+                  value="stop"
+                  checked={yesterdayWorkContinuationOption === 'stop'}
+                  onChange={e => setYesterdayWorkContinuationOption(e.target.value as 'stop')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Stop Working
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Stop your work session after yesterday's entry
+                  </div>
+                </div>
+              </label>
+
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                yesterdayWorkContinuationOption === 'start' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="yesterdayWorkContinuation"
+                  value="start"
+                  checked={yesterdayWorkContinuationOption === 'start'}
+                  onChange={e => setYesterdayWorkContinuationOption(e.target.value as 'start')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Start New Work Session Today
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Stop yesterday's work and start a new work session today
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Stop Work Time Input - Only show when Start is selected */}
+          {yesterdayWorkContinuationOption === 'start' && (
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                What time did you stop working yesterday?
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <input
+                    type="date"
+                    value={yesterdayWorkStopDate ? yesterdayWorkStopDate.toISOString().split('T')[0] : ''}
+                    onChange={e => setYesterdayWorkStopDate(e.target.value ? new Date(e.target.value) : null)}
+                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                        : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
+                    }`}
+                    required
+                  />
+                </div>
+                <div>
+                  <input
+                    type="time"
+                    value={yesterdayWorkStopTime}
+                    onChange={e => setYesterdayWorkStopTime(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                        : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
+                    }`}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <div className={`p-3 rounded-md ${isDarkMode ? 'bg-blue-900/30 border border-blue-700' : 'bg-blue-50 border border-blue-200'}`}>
+            <p className={`text-sm ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
+              📝 After you submit, the system will:
+            </p>
+            <ul className={`mt-2 text-sm space-y-1 ${isDarkMode ? 'text-blue-300' : 'text-blue-800'}`}>
+              <li>• Record your stop time for yesterday</li>
+              {yesterdayWorkContinuationOption === 'continue' && (
+                <li>• Keep your work session active (you can continue working today)</li>
+              )}
+              {yesterdayWorkContinuationOption === 'stop' && (
+                <li>• Record your work stop at the current time</li>
+              )}
+              {yesterdayWorkContinuationOption === 'start' && (
+                <>
+                  <li>• Record your work stop at the time and date you specify</li>
+                  <li>• Start a new work session at the current time</li>
+                </>
+              )}
+              <li>• Calculate your payment correctly</li>
+            </ul>
+          </div>
+          
           <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-3 pt-2">
-            <button
+            <motion.button
               type="button"
-              onClick={() => setShowForgotModal(false)}
-              className="px-4 py-2 border rounded-md"
+              onClick={() => {
+                setShowForgotModal(false);
+                setForgotOutTime('');
+                setForgotOutDate(null);
+                setYesterdayWorkContinuationOption('continue');
+                setYesterdayWorkStopTime('');
+                setYesterdayWorkStopDate(null);
+                // Clear code page state when modal closes
+                setCode('');
+                setMessage('');
+                setCurrentUser(null);
+                setUserState(null);
+              }}
+              className={`px-4 py-2 border rounded-md transition-colors ${
+                isDarkMode 
+                  ? 'border-slate-600 text-slate-300 hover:bg-slate-700'
+                  : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
             >
               Cancel
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               type="button"
               onClick={handleForgotOutSubmit}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-              disabled={!forgotOutTime || isLoading}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!forgotOutTime || isLoading || (yesterdayWorkContinuationOption === 'start' && (!yesterdayWorkStopTime || !yesterdayWorkStopDate))}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
             >
-              Submit
-            </button>
+              {isLoading ? 'Processing...' : 
+                yesterdayWorkContinuationOption === 'continue' ? 'Submit' :
+                yesterdayWorkContinuationOption === 'stop' ? 'Submit & Stop Work' :
+                'Submit & Start New Session'}
+            </motion.button>
           </div>
         </div>
       </Modal>
@@ -981,6 +1349,11 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           setShowForgotWorkModal(false);
           setForgotWorkStopTime('');
           setPendingWorkUser(null);
+          // Clear code page state when modal closes
+          setCode('');
+          setMessage('');
+          setCurrentUser(null);
+          setUserState(null);
         }}
         title="Long Work Session Detected"
         size="md"
@@ -997,6 +1370,9 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
             )}
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-red-200' : 'text-red-700'}`}>
               It looks like you may have forgotten to stop work earlier. Please enter the time when you actually stopped working.
+            </p>
+            <p className={`mt-2 text-sm ${isDarkMode ? 'text-red-200' : 'text-red-700'}`}>
+              Note: Break actions are blocked. You cannot start/stop a break until you enter the earlier stop work time, because a long work session was detected.
             </p>
           </div>
           
@@ -1049,6 +1425,11 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
                 setShowForgotWorkModal(false);
                 setForgotWorkStopTime('');
                 setPendingWorkUser(null);
+                // Clear code page state when modal closes
+                setCode('');
+                setMessage('');
+                setCurrentUser(null);
+                setUserState(null);
               }}
               className={`px-4 py-2 border rounded-md transition-colors ${
                 isDarkMode 
@@ -1081,6 +1462,14 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
           setShowForgotBreakModal(false);
           setForgotBreakStopTime('');
           setPendingBreakUser(null);
+          setWorkContinuationOption('continue');
+          setForgotWorkStopTime('');
+          setForgotWorkStopDate(null);
+          // Clear code page state when modal closes
+          setCode('');
+          setMessage('');
+          setCurrentUser(null);
+          setUserState(null);
         }}
         title="Long Break Detected"
         size="md"
@@ -1111,7 +1500,7 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
               className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
                 isDarkMode 
                   ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
-                  : 'border-slate-300 text-slate-800 focus:ring-blue-500'
+                  : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
               }`}
               min={(() => {
                 if (!currentUser?.currentState?.lastBreakStart) return undefined;
@@ -1130,14 +1519,151 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
               </p>
             )}
           </div>
+
+          {/* Work Continuation Options */}
+          <div>
+            <label className={`block text-sm font-medium mb-3 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              What are you doing now?
+            </label>
+            <div className="space-y-3">
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                workContinuationOption === 'continue' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="workContinuation"
+                  value="continue"
+                  checked={workContinuationOption === 'continue'}
+                  onChange={e => setWorkContinuationOption(e.target.value as 'continue')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Continue Working
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Just save the break stop time and continue working
+                  </div>
+                </div>
+              </label>
+
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                workContinuationOption === 'stop' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="workContinuation"
+                  value="stop"
+                  checked={workContinuationOption === 'stop'}
+                  onChange={e => setWorkContinuationOption(e.target.value as 'stop')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Stop Working
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Stop your work session after the break
+                  </div>
+                </div>
+              </label>
+
+              <label className={`flex items-center space-x-3 cursor-pointer p-3 rounded-md border ${
+                workContinuationOption === 'start' 
+                  ? (isDarkMode ? 'bg-blue-900/30 border-blue-600' : 'bg-blue-50 border-blue-300')
+                  : (isDarkMode ? 'border-slate-600 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50')
+              }`}>
+                <input
+                  type="radio"
+                  name="workContinuation"
+                  value="start"
+                  checked={workContinuationOption === 'start'}
+                  onChange={e => setWorkContinuationOption(e.target.value as 'start')}
+                  className={`w-4 h-4 ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-slate-700 border-slate-600 focus:ring-blue-400/20'
+                      : 'text-blue-600 bg-white border-slate-300 focus:ring-blue-500'
+                  }`}
+                />
+                <div>
+                  <div className={`font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Start New Work Session
+                  </div>
+                  <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Stop current work and start a new work session
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Stop Work Time Input - Only show when Start is selected */}
+          {workContinuationOption === 'start' && (
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                What time did you stop working?
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <input
+                    type="date"
+                    value={forgotWorkStopDate ? forgotWorkStopDate.toISOString().split('T')[0] : ''}
+                    onChange={e => setForgotWorkStopDate(e.target.value ? new Date(e.target.value) : null)}
+                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                        : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
+                    }`}
+                    required
+                  />
+                </div>
+                <div>
+                  <input
+                    type="time"
+                    value={forgotWorkStopTime}
+                    onChange={e => setForgotWorkStopTime(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-slate-700 border-slate-600 text-white focus:ring-blue-400/20'
+                        : 'bg-white border-slate-300 text-slate-800 focus:ring-blue-500'
+                    }`}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           
           <div className={`p-3 rounded-md ${isDarkMode ? 'bg-blue-900/30 border border-blue-700' : 'bg-blue-50 border border-blue-200'}`}>
             <p className={`text-sm ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
               📝 After you submit, the system will:
             </p>
             <ul className={`mt-2 text-sm space-y-1 ${isDarkMode ? 'text-blue-300' : 'text-blue-800'}`}>
-              <li>• Record your break stop at the time you specify</li>
-              <li>• Record your work stop at the current time</li>
+              <li>• Record your break stop at the time you specify (same date as break start)</li>
+              {workContinuationOption === 'continue' && (
+                <li>• Keep your work session active (you can continue working)</li>
+              )}
+              {workContinuationOption === 'stop' && (
+                <li>• Record your work stop at the current time</li>
+              )}
+              {workContinuationOption === 'start' && (
+                <>
+                  <li>• Record your work stop at the time and date you specify</li>
+                  <li>• Start a new work session at the current time</li>
+                </>
+              )}
               <li>• Calculate your payment correctly</li>
             </ul>
           </div>
@@ -1149,6 +1675,14 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
                 setShowForgotBreakModal(false);
                 setForgotBreakStopTime('');
                 setPendingBreakUser(null);
+                setWorkContinuationOption('continue');
+                setForgotWorkStopTime('');
+                setForgotWorkStopDate(null);
+                // Clear code page state when modal closes
+                setCode('');
+                setMessage('');
+                setCurrentUser(null);
+                setUserState(null);
               }}
               className={`px-4 py-2 border rounded-md transition-colors ${
                 isDarkMode 
@@ -1164,11 +1698,14 @@ const CodeEntry: React.FC<CodeEntryProps> = () => {
               type="button"
               onClick={handleForgotBreakSubmit}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!forgotBreakStopTime || isLoading}
+              disabled={!forgotBreakStopTime || isLoading || (workContinuationOption === 'start' && (!forgotWorkStopTime || !forgotWorkStopDate))}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
-              {isLoading ? 'Processing...' : 'Submit & Stop Work'}
+              {isLoading ? 'Processing...' : 
+                workContinuationOption === 'continue' ? 'Submit' :
+                workContinuationOption === 'stop' ? 'Submit & Stop Work' :
+                'Submit & Start New Session'}
             </motion.button>
           </div>
         </div>
