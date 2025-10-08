@@ -287,15 +287,15 @@ const AdminDailyOverview: React.FC = () => {
           <table className="min-w-full divide-y divide-slate-200 table-fixed">
             <thead className={`${isDarkMode ? 'bg-slate-700' : 'bg-slate-50'} sticky top-0 z-20 shadow-sm`}>
               <tr>
-                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-64`}>User</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-20`}>User</th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-28`}>Status</th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-24`}>Start Work</th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-24`}>Start Break</th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-24`}>Stop Break</th>
+                <th className={`px-6 py-3 text-left text-[10px] sm:text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-28`}>Stop Work (Today)</th>
                 {isPastSelectedDay && (
                   <th className={`px-6 py-3 text-left text-[10px] sm:text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-32`}>Stop Work (Next Day)</th>
                 )}
-                <th className={`px-6 py-3 text-left text-[10px] sm:text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-28`}>Stop Work (Today)</th>
                 {/* Stop Work (Prev Day) temporarily hidden */}
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-36`}>Work Hours</th>
                 <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-500'} w-32`}>Break Hours</th>
@@ -398,8 +398,8 @@ const AdminDailyOverview: React.FC = () => {
 
                     return {
                       startWork,
-                      startBreaks: breakStarts.length ? breakStarts.join(', ') : '—',
-                      stopBreaks: breakStops.length ? breakStops.join(', ') : '—',
+                      startBreaks: breakStarts,
+                      stopBreaks: breakStops,
                       stopWorkToday,
                       stopWorkNext,
                     };
@@ -451,7 +451,18 @@ const AdminDailyOverview: React.FC = () => {
                       transition={{ delay: index * 0.02 }}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{user.name}</div>
+                        <div 
+                          className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'} cursor-default relative group`}
+                        >
+                          {user.name.split(' ')[0]}
+                          <div className={`absolute bottom-full left-0 mb-2 px-2 py-1 text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50 whitespace-nowrap ${
+                            isDarkMode 
+                              ? 'bg-slate-700 text-slate-200 border border-slate-600' 
+                              : 'bg-slate-800 text-white border border-slate-600'
+                          }`}>
+                            {user.name}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap w-28">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusClass}`}>{statusLabel === 'completed' ? 'Completed' : statusLabel === 'on_break' ? 'On Break' : statusLabel === 'working' ? 'Working' : 'Not Working'}</span>
@@ -468,7 +479,13 @@ const AdminDailyOverview: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap w-24">
                         <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} flex flex-col gap-1`}>
                           {perSessionDisplay.length > 0 ? perSessionDisplay.map((s, i) => (
-                            <span key={`bs-${i}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{s.startBreaks}</span>
+                            <div key={`bs-${i}`} className="flex flex-col gap-1">
+                              {Array.isArray(s.startBreaks) && s.startBreaks.length > 0 ? s.startBreaks.map((time, j) => (
+                                <span key={`bs-${i}-${j}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{time}</span>
+                              )) : (
+                                <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
+                              )}
+                            </div>
                           )) : (
                             <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
                           )}
@@ -477,7 +494,22 @@ const AdminDailyOverview: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap w-24">
                         <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} flex flex-col gap-1`}>
                           {perSessionDisplay.length > 0 ? perSessionDisplay.map((s, i) => (
-                            <span key={`bse-${i}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{s.stopBreaks}</span>
+                            <div key={`bse-${i}`} className="flex flex-col gap-1">
+                              {Array.isArray(s.stopBreaks) && s.stopBreaks.length > 0 ? s.stopBreaks.map((time, j) => (
+                                <span key={`bse-${i}-${j}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{time}</span>
+                              )) : (
+                                <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
+                              )}
+                            </div>
+                          )) : (
+                            <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap w-28">
+                        <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} flex flex-col gap-1`}>
+                          {perSessionDisplay.length > 0 ? perSessionDisplay.map((s, i) => (
+                            <span key={`wst-${i}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{s.stopWorkToday}</span>
                           )) : (
                             <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
                           )}
@@ -494,15 +526,6 @@ const AdminDailyOverview: React.FC = () => {
                           </div>
                         </td>
                       )}
-                      <td className="px-6 py-4 whitespace-nowrap w-28">
-                        <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} flex flex-col gap-1`}>
-                          {perSessionDisplay.length > 0 ? perSessionDisplay.map((s, i) => (
-                            <span key={`wst-${i}`} className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>{s.stopWorkToday}</span>
-                          )) : (
-                            <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-1.5 py-0.5 inline-block text-center`}>—</span>
-                          )}
-                        </div>
-                      </td>
                       {/* Stop Work (Prev Day) temporarily hidden */}
                       <td className="px-6 py-4 whitespace-nowrap w-36">
                         <div className={`text-sm font-medium ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>{displayWorkHours}</div>
@@ -672,25 +695,6 @@ function EditTimesModal(props: {
                     }}>{savingKey === `ebr-${i}` ? 'Saving...' : 'Save'}</button>
                   </div>
 
-                  {/* Stop Work (Next Day) */}
-                  <div className="flex items-center gap-2">
-                    <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Stop Work (Next Day)</label>
-                    {r.stopNextIdx === undefined ? (
-                      <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-3 py-2 text-center w-full`}>—</span>
-                    ) : (
-                      <input type="time" className={`${inputClass} w-full`} value={r.stopWorkNext || ''} onChange={e => setSessionRows && setSessionRows(prev => prev.map((p, pi) => pi === i ? { ...p, stopWorkNext: e.target.value } : p))} />
-                    )}
-                    <button disabled={r.stopNextIdx === undefined || !r.stopWorkNext || savingKey === `swn-${i}`} className={`h-9 px-3 text-xs rounded shrink-0 ${isDarkMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`} onClick={async () => {
-                      if (r.stopNextIdx === undefined || !r.stopWorkNext) return;
-                      setSavingKey(`swn-${i}`);
-                      const [y, m, d] = selectedDate.split('-').map(Number);
-                      const [hh, mm] = r.stopWorkNext.split(':').map(Number);
-                      await updateAttendanceEntry(user.id, r.stopNextIdx, { timestamp: new Date(y, m - 1, d + 1, hh, mm, 0, 0), type: 'STOP_WORK' } as AttendanceEntry);
-                      if (refreshAfterPartialSave) { await refreshAfterPartialSave(); }
-                      setSavingKey(null);
-                    }}>{savingKey === `swn-${i}` ? 'Saving...' : 'Save'}</button>
-                  </div>
-
                   {/* Stop Work (Today) */}
                   <div className="flex items-center gap-2">
                     <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Stop Work (Today)</label>
@@ -708,6 +712,25 @@ function EditTimesModal(props: {
                       if (refreshAfterPartialSave) { await refreshAfterPartialSave(); }
                       setSavingKey(null);
                     }}>{savingKey === `swt-${i}` ? 'Saving...' : 'Save'}</button>
+                  </div>
+
+                  {/* Stop Work (Next Day) */}
+                  <div className="flex items-center gap-2">
+                    <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Stop Work (Next Day)</label>
+                    {r.stopNextIdx === undefined ? (
+                      <span className={`${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'} rounded px-3 py-2 text-center w-full`}>—</span>
+                    ) : (
+                      <input type="time" className={`${inputClass} w-full`} value={r.stopWorkNext || ''} onChange={e => setSessionRows && setSessionRows(prev => prev.map((p, pi) => pi === i ? { ...p, stopWorkNext: e.target.value } : p))} />
+                    )}
+                    <button disabled={r.stopNextIdx === undefined || !r.stopWorkNext || savingKey === `swn-${i}`} className={`h-9 px-3 text-xs rounded shrink-0 ${isDarkMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`} onClick={async () => {
+                      if (r.stopNextIdx === undefined || !r.stopWorkNext) return;
+                      setSavingKey(`swn-${i}`);
+                      const [y, m, d] = selectedDate.split('-').map(Number);
+                      const [hh, mm] = r.stopWorkNext.split(':').map(Number);
+                      await updateAttendanceEntry(user.id, r.stopNextIdx, { timestamp: new Date(y, m - 1, d + 1, hh, mm, 0, 0), type: 'STOP_WORK' } as AttendanceEntry);
+                      if (refreshAfterPartialSave) { await refreshAfterPartialSave(); }
+                      setSavingKey(null);
+                    }}>{savingKey === `swn-${i}` ? 'Saving...' : 'Save'}</button>
                   </div>
                 </div>
               ))}
