@@ -320,7 +320,7 @@ const AdminDailyOverview: React.FC = () => {
                   const ongoing = isSelectedToday && stats.startWorkTime && !stats.stopWorkTime;
                   const baseWorkSeconds = stats.workMinutes * 60;
                   const displayWorkHours = ongoing && stats.startWorkTime
-                    ? `${formatHMS(baseWorkSeconds + Math.max(0, differenceInSeconds(now, stats.startWorkTime)))} (ongoing)`
+                    ? `${formatHMS(baseWorkSeconds)} (ongoing)`
                     : formatHMS(baseWorkSeconds);
 
                   const baseBreakSeconds = Math.round(stats.breakHours * 3600);
