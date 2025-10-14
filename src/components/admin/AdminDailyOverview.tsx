@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { getAllUsers, updateAttendanceEntry } from '../../services/firestore';
+import { getAllUsers, updateAttendanceEntry, updateUserAttendance } from '../../services/firestore';
 import { AttendanceEntry, User } from '../../types';
 import { format, endOfDay, differenceInMinutes, differenceInSeconds, addDays } from 'date-fns';
 import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import { getCurrentUserState } from '../../utils/timeCalculations';
 import Modal from '../Modal';
-import { Edit2, RefreshCw } from 'lucide-react';
+import { Edit2, RefreshCw, CheckCircle } from 'lucide-react';
 
 const AdminDailyOverview: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -18,6 +18,8 @@ const AdminDailyOverview: React.FC = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState<'success' | 'error' | 'info'>('info');
   // Legacy arrays replaced by aligned sessionRows editor
   const [sessionRows, setSessionRows] = useState<Array<{
     startIdx: number;
@@ -32,6 +34,16 @@ const AdminDailyOverview: React.FC = () => {
     stopWorkNext?: string;
   }>>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Auto-hide success message after 5 seconds
+  useEffect(() => {
+    if (messageType === 'success' && message) {
+      const timer = setTimeout(() => {
+        setMessage('');
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [messageType, message]);
 
   // Auto-refresh every 5 minutes
   useEffect(() => {
@@ -218,6 +230,24 @@ const AdminDailyOverview: React.FC = () => {
         </div>
       </motion.div>
 
+      {/* Toast Notification */}
+      {message && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`p-4 rounded-xl flex items-center space-x-2 ${
+            messageType === 'success' 
+              ? isDarkMode ? 'bg-green-900/50 text-green-300' : 'bg-green-100 text-green-800'
+              : messageType === 'error' 
+                ? isDarkMode ? 'bg-red-900/50 text-red-300' : 'bg-red-100 text-red-800'
+                : isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-800'
+          }`}
+        >
+          {messageType === 'success' && <CheckCircle className="w-5 h-5" />}
+          <span className="font-medium">{message}</span>
+        </motion.div>
+      )}
+
       {/* Controls */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
@@ -320,6 +350,7 @@ const AdminDailyOverview: React.FC = () => {
                   const ongoing = isSelectedToday && stats.startWorkTime && !stats.stopWorkTime;
                   const baseWorkSeconds = stats.workMinutes * 60;
                   const displayWorkHours = ongoing && stats.startWorkTime
+                    // ? `${formatHMS(baseWorkSeconds + Math.max(0, differenceInSeconds(now, stats.startWorkTime)))} (ongoing)`
                     ? `${formatHMS(baseWorkSeconds)} (ongoing)`
                     : formatHMS(baseWorkSeconds);
 
@@ -541,9 +572,8 @@ const AdminDailyOverview: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap w-20">
                         <button
                           onClick={handleOpenEdit}
-                          className={`p-2 rounded-md ${isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'} disabled:opacity-50 disabled:cursor-not-allowed`}
-                          title="Edit entries"
-                          disabled={!hasAnyToday}
+                          className={`p-2 rounded-md ${isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                          title={hasAnyToday ? "Edit entries" : "Add attendance"}
                         >
                           <Edit2 size={18} />
                         </button>
@@ -567,6 +597,8 @@ const AdminDailyOverview: React.FC = () => {
           sessionRows={sessionRows}
           setSessionRows={setSessionRows}
           refreshAfterPartialSave={refreshUsers}
+          setMessage={setMessage}
+          setMessageType={setMessageType}
           onSave={async () => {
             if (!editingUser) return;
             try {
@@ -620,13 +652,100 @@ function EditTimesModal(props: {
     stopWorkNext?: string;
   }>>>;
   refreshAfterPartialSave?: () => Promise<void>;
+  setMessage: (message: string) => void;
+  setMessageType: (type: 'success' | 'error' | 'info') => void;
 }) {
-  const { isDarkMode, isOpen, onClose, user, selectedDate, sessionRows = [], setSessionRows, refreshAfterPartialSave } = props;
+  const { isDarkMode, isOpen, onClose, user, selectedDate, sessionRows = [], setSessionRows, refreshAfterPartialSave, setMessage, setMessageType } = props;
   const [savingKey, setSavingKey] = React.useState<string | null>(null);
+  const [showNewSessionForm, setShowNewSessionForm] = React.useState(false);
+  const [newSession, setNewSession] = React.useState({
+    startWork: '',
+    startBreak: '',
+    stopBreak: '',
+    stopWorkToday: '',
+  });
 
   const inputClass = `border rounded-md px-3 py-2 text-sm ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'border-slate-300 text-slate-800'}`;
   // labelClass removed after simplifying modal
   const helpClass = `text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`;
+
+  const handleCreateNewSession = async () => {
+    if (!newSession.startWork) {
+      setMessage('Please enter at least a Start Work time');
+      setMessageType('error');
+      return;
+    }
+
+    setSavingKey('new-session');
+    try {
+      const [y, m, d] = selectedDate.split('-').map(Number);
+      const entries: Array<{ timestamp: Date; type: 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK' }> = [];
+
+      // Add START_WORK (required)
+      const [swh, swm] = newSession.startWork.split(':').map(Number);
+      entries.push({
+        timestamp: new Date(y, m - 1, d, swh, swm, 0, 0),
+        type: 'START_WORK'
+      });
+
+      // Add START_BREAK (if provided)
+      if (newSession.startBreak) {
+        const [sbh, sbm] = newSession.startBreak.split(':').map(Number);
+        entries.push({
+          timestamp: new Date(y, m - 1, d, sbh, sbm, 0, 0),
+          type: 'START_BREAK'
+        });
+      }
+
+      // Add STOP_BREAK (if provided)
+      if (newSession.stopBreak) {
+        const [stbh, stbm] = newSession.stopBreak.split(':').map(Number);
+        entries.push({
+          timestamp: new Date(y, m - 1, d, stbh, stbm, 0, 0),
+          type: 'STOP_BREAK'
+        });
+      }
+
+      // Add STOP_WORK (if provided)
+      if (newSession.stopWorkToday) {
+        const [stwh, stwm] = newSession.stopWorkToday.split(':').map(Number);
+        entries.push({
+          timestamp: new Date(y, m - 1, d, stwh, stwm, 0, 0),
+          type: 'STOP_WORK'
+        });
+      }
+
+      // Sort entries by timestamp to ensure correct order
+      entries.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+      // Add all entries to the user's attendance log
+      for (const entry of entries) {
+        await updateUserAttendance(user.id, entry);
+      }
+
+      if (refreshAfterPartialSave) {
+        await refreshAfterPartialSave();
+      }
+
+      // Reset form and close modal
+      setNewSession({
+        startWork: '',
+        startBreak: '',
+        stopBreak: '',
+        stopWorkToday: '',
+      });
+      setShowNewSessionForm(false);
+      onClose(); // Close the modal
+      setMessage('New session created successfully!');
+      setMessageType('success');
+    } catch (error) {
+      console.error('Error creating new session:', error);
+      setMessage('Failed to create new session');
+      setMessageType('error');
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Edit Times - ${user.name} (${selectedDate})`} size="sm">
@@ -634,10 +753,98 @@ function EditTimesModal(props: {
         {/* Aligned session editor mirroring table columns */}
         <div className="space-y-2">
           <div className={`text-sm font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>Sessions (aligned with table)</div>
-          {sessionRows.length === 0 ? (
-            <div className={helpClass}>No sessions found for this day</div>
+          {sessionRows.length === 0 && !showNewSessionForm ? (
+            <div className="space-y-3">
+              <div className={helpClass}>No sessions found for this day</div>
+              <button
+                onClick={() => setShowNewSessionForm(true)}
+                className={`w-full py-2 px-4 text-sm rounded-md ${isDarkMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+              >
+                + Add New Session
+              </button>
+            </div>
+          ) : sessionRows.length === 0 && showNewSessionForm ? (
+            <div className="space-y-6">
+              <div className={`${isDarkMode ? 'bg-slate-700/40' : 'bg-slate-50'} rounded-md p-3 space-y-3`}>
+                <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>New Session</div>
+
+                {/* Start Work */}
+                <div className="flex items-center gap-2">
+                  <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Start Work *</label>
+                  <input
+                    type="time"
+                    className={`${inputClass} w-full`}
+                    value={newSession.startWork}
+                    onChange={e => setNewSession(prev => ({ ...prev, startWork: e.target.value }))}
+                    required
+                  />
+                  <div className="w-16"></div>
+                </div>
+
+                {/* Start Break */}
+                <div className="flex items-center gap-2">
+                  <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Start Break (optional)</label>
+                  <input
+                    type="time"
+                    className={`${inputClass} w-full`}
+                    value={newSession.startBreak}
+                    onChange={e => setNewSession(prev => ({ ...prev, startBreak: e.target.value }))}
+                  />
+                  <div className="w-16"></div>
+                </div>
+
+                {/* Stop Break */}
+                <div className="flex items-center gap-2">
+                  <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Stop Break (optional)</label>
+                  <input
+                    type="time"
+                    className={`${inputClass} w-full`}
+                    value={newSession.stopBreak}
+                    onChange={e => setNewSession(prev => ({ ...prev, stopBreak: e.target.value }))}
+                  />
+                  <div className="w-16"></div>
+                </div>
+
+                {/* Stop Work Today */}
+                <div className="flex items-center gap-2">
+                  <label className={`w-44 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Stop Work (optional)</label>
+                  <input
+                    type="time"
+                    className={`${inputClass} w-full`}
+                    value={newSession.stopWorkToday}
+                    onChange={e => setNewSession(prev => ({ ...prev, stopWorkToday: e.target.value }))}
+                  />
+                  <div className="w-16"></div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    setShowNewSessionForm(false);
+                    setNewSession({
+                      startWork: '',
+                      startBreak: '',
+                      stopBreak: '',
+                      stopWorkToday: '',
+                    });
+                  }}
+                  className={`flex-1 py-2 px-3 text-xs rounded ${isDarkMode ? 'bg-slate-600 text-white hover:bg-slate-500' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateNewSession}
+                  disabled={!newSession.startWork || savingKey === 'new-session'}
+                  className={`flex-1 py-2 px-3 text-xs rounded ${isDarkMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`}
+                >
+                  {savingKey === 'new-session' ? 'Creating...' : 'Create Session'}
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-6">
+              {/* Existing sessions */}
               {sessionRows.map((r, i) => (
                 <div key={`sr-${r.startIdx}-${r.stopTodayIdx ?? r.stopNextIdx ?? 'open'}`} className={`${isDarkMode ? 'bg-slate-700/40' : 'bg-slate-50'} rounded-md p-3 space-y-3`}>
                   <div className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Session {i + 1}</div>
@@ -734,6 +941,7 @@ function EditTimesModal(props: {
                   </div>
                 </div>
               ))}
+              
             </div>
           )}
         </div>
