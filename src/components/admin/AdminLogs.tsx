@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Download, RotateCw, Clock, LogIn, LogOut, Edit, Trash2 } from 'lucide-react';
+import { Search, Download, RotateCw, Clock, LogIn, LogOut, Edit, Trash2, CheckCircle } from 'lucide-react';
 import { getAllUsers, updateAttendanceEntry, deleteAttendanceEntry } from '../../services/firestore';
 import { AttendanceRecord, User } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -44,7 +44,19 @@ const AdminLogs: React.FC = () => {
     time: '',
     type: 'START_WORK' as 'START_WORK' | 'START_BREAK' | 'STOP_BREAK' | 'STOP_WORK'
   });
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState<'success' | 'error' | 'info'>('info');
   const { isDarkMode } = useTheme();
+
+  // Auto-hide success message after 5 seconds
+  useEffect(() => {
+    if (messageType === 'success' && message) {
+      const timer = setTimeout(() => {
+        setMessage('');
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [messageType, message]);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -282,7 +294,8 @@ const AdminLogs: React.FC = () => {
       const entryIndex = findEntryIndex(userId, parseInt(timestampStr));
       
       if (entryIndex === -1) {
-        alert('Error: Could not find entry to update');
+        setMessage('Error: Could not find entry to update');
+        setMessageType('error');
         return;
       }
       
@@ -296,10 +309,12 @@ const AdminLogs: React.FC = () => {
       // Refresh the data
       await loadData();
       setEditingLog(null);
-      alert('Attendance entry updated successfully!');
+      setMessage('Attendance entry updated successfully!');
+      setMessageType('success');
     } catch (error) {
       console.error('Error updating attendance entry:', error);
-      alert('Error updating attendance entry');
+      setMessage('Error updating attendance entry');
+      setMessageType('error');
     }
   };
 
@@ -321,7 +336,8 @@ const AdminLogs: React.FC = () => {
         const entryIndex = findEntryIndex(userId, parseInt(timestampStr));
         
         if (entryIndex === -1) {
-          alert('Error: Could not find entry to delete');
+          setMessage('Error: Could not find entry to delete');
+          setMessageType('error');
           return;
         }
         
@@ -329,10 +345,12 @@ const AdminLogs: React.FC = () => {
         
         // Refresh the data
         await loadData();
-        alert('Attendance entry deleted successfully!');
+        setMessage('Attendance entry deleted successfully!');
+        setMessageType('success');
       } catch (error) {
         console.error('Error deleting attendance entry:', error);
-        alert('Error deleting attendance entry');
+        setMessage('Error deleting attendance entry');
+        setMessageType('error');
       }
     }
   };
@@ -400,6 +418,24 @@ const AdminLogs: React.FC = () => {
           </div>
         </div>
       </motion.div>
+
+      {/* Toast Notification */}
+      {message && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`p-4 rounded-xl flex items-center space-x-2 ${
+            messageType === 'success' 
+              ? isDarkMode ? 'bg-green-900/50 text-green-300' : 'bg-green-100 text-green-800'
+              : messageType === 'error' 
+                ? isDarkMode ? 'bg-red-900/50 text-red-300' : 'bg-red-100 text-red-800'
+                : isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-800'
+          }`}
+        >
+          {messageType === 'success' && <CheckCircle className="w-5 h-5" />}
+          <span className="font-medium">{message}</span>
+        </motion.div>
+      )}
 
       {/* Filters */}
       <motion.div 
